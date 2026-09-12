@@ -287,6 +287,34 @@ enriches it from the session so the card can say "Chamfer 0.3 mm on 7
 bed-contact edges of Body1". The ids stay in the payload: the card explains the
 request, it does not replace it.
 
+### A chamfer that adds material
+
+The gusset rule is a chamfer, which is less surprising than it sounds. A
+chamfer on a *convex* edge cuts the corner off; on a concave one it fills the
+corner in, and the corner beneath a ledge is concave. An equal-distance
+chamfer there adds exactly the 45 degree triangle wanted, and leaves the top
+of the ledge alone.
+
+That makes convexity load-bearing, and the first version of
+`interior_angle_deg` got it wrong in a way that happened not to matter yet. It
+stepped along the sum of the two outward normals and asked whether that left
+the solid — which it does at a convex corner *and* at a concave one, where it
+points into the pocket, so every edge came back convex. The only caller was
+`bed_chamfer`, whose footprint edges are all convex, so the answer was right
+by luck. It now walks off the edge across one face and asks which side of the
+other face it lands on, which actually distinguishes them.
+
+Because a chamfer the wrong way round produces a perfectly healthy feature and
+a worse part, a rule states which direction it expects and `chamfer_op`
+verifies it against the body's volume, rolling back if material moved the
+wrong way. No health check would have caught that.
+
+Gussets are also the reason a chamfer job carries its own size: a gusset is
+sized by the ledge it sits under, not by a setting, so one batch can want
+several distances. A chamfer feature holds more than one edge set, so they
+still land in a single feature — which is what stops the first one
+invalidating the edges the rest are holding.
+
 ### What the rules refuse to do
 
 Conservative by design, because a wrong fix is worse than a missing one. A bore

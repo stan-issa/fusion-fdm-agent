@@ -226,5 +226,7 @@ def apply(context, findings, params):
                 finding.id, "Every edge was skipped, so there is nothing to chamfer."
             ))
             continue
-        jobs.append((finding, finding.entities))
-    return outcomes + chamfer_op.apply_chamfer(context, jobs, params["size_mm"])
+        jobs.append((finding, finding.entities, params["size_mm"]))
+    return outcomes + chamfer_op.apply_chamfer(
+        context, jobs, expect=chamfer_op.REMOVES
+    )

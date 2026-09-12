@@ -19,6 +19,7 @@ guess:
 | **Chamfer bed-contact edges** | The outline where the part meets the bed | A chamfer, 0.3 mm by default — skipping edges too close to a neighbour to survive it |
 | **Add lead-ins to holes** | Plain cylindrical bores with a bare mouth | A 0.5 mm entrance chamfer; the bore diameter below it is untouched |
 | **Teardrop horizontal bores** | Bores running across the build direction (within 30° of horizontal), at any diameter, whose flat roof cannot print | A 45° teardrop roof, tangent to the bore, so the original circular clearance is preserved |
+| **Slope ledge undersides** | Straight ledges projecting from a wall, whose flat underside is a 90° overhang | A 45° triangular gusset filling the corner beneath it. The top of the ledge is untouched |
 
 Press **Check model**, tick what you want, press **Apply**. That click is the
 approval — you have already seen exactly what you selected.

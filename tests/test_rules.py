@@ -32,7 +32,9 @@ from FusionFDMAgent.lib import design_tools                     # noqa: E402
 from FusionFDMAgent.lib.rules import geometry as geo            # noqa: E402
 from FusionFDMAgent.lib.rules import signature as sig           # noqa: E402
 from FusionFDMAgent.lib.rules import RULES, BY_ID               # noqa: E402
-from FusionFDMAgent.lib.rules import chamfer_op, teardrop_bore   # noqa: E402
+from FusionFDMAgent.lib.rules import (                          # noqa: E402
+    chamfer_op, fusion_geom as fg, ledge_gusset, teardrop_bore,
+)
 from FusionFDMAgent.lib.rules.session import _same_document     # noqa: E402
 from FusionFDMAgent.lib.rules.base import (                     # noqa: E402
     Finding, Outcome, RuleContext, RuleError, describe_params, merge_params,
@@ -345,6 +347,156 @@ def test_reveal():
           Finding("r:4", "x", "t", entities=edges).reveal is not edges)
 
 
+# -- which way a chamfer would move material -------------------------------
+
+
+def _corner(first_normal, second_normal, first_interior, start, end):
+    """Two faces meeting at a straight edge, with declared normals.
+
+    `first_interior` is a point inside the first face, which is what says
+    which way its surface runs off the edge.
+    """
+    planes = adsk.core.SurfaceTypes.PlaneSurfaceType
+    first = _FakeFace("a", planes, first_normal, first_interior)
+    second = _FakeFace("b", planes, second_normal, (0.0, 0.0, 0.0))
+    edge = _FusionObject(
+        entityToken="edge",
+        geometry=_FusionObject(curveType=adsk.core.Curve3DTypes.Line3DCurveType),
+        faces=_Collection([first, second]),
+        body=_FakeBody(),
+        startVertex=_FusionObject(geometry=adsk.core.Point3D.create(*start)),
+        endVertex=_FusionObject(geometry=adsk.core.Point3D.create(*end)),
+        pointOnEdge=adsk.core.Point3D.create(
+            *[(a + b) / 2.0 for a, b in zip(start, end)]
+        ),
+    )
+    return edge
+
+
+def test_convexity():
+    print("which way a chamfer would move material")
+
+    # The top of a box meeting its side. Walking across the top away from the
+    # edge leaves the side's half-space, so the solid closes up behind you:
+    # a convex 90 degree corner, and a chamfer on it cuts material away.
+    box = _corner(
+        first_normal=(0.0, 0.0, 1.0), second_normal=(1.0, 0.0, 0.0),
+        first_interior=(-1.0, 0.0, 0.0),
+        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+    )
+    check("a box corner is 90 degrees",
+          close(fg.interior_angle_deg(box), 90.0, 1e-6),
+          fg.interior_angle_deg(box))
+
+    # The underside of a ledge meeting the wall it projects from. Walking out
+    # along the underside stays inside the wall's half-space -- the solid
+    # opens out around you. 270 degrees, and a chamfer here *fills* the
+    # corner, which is the whole basis of the gusset rule.
+    #
+    # The earlier test stepped along the sum of the two outward normals and
+    # asked whether that left the solid. It does leave it at a convex corner
+    # and also at a concave one, where it points into the pocket, so every
+    # edge came back convex.
+    ledge = _corner(
+        first_normal=(0.0, 0.0, -1.0), second_normal=(1.0, 0.0, 0.0),
+        first_interior=(1.0, 0.0, 0.0),
+        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+    )
+    check("a ledge underside corner is 270 degrees",
+          close(fg.interior_angle_deg(ledge), 270.0, 1e-6),
+          fg.interior_angle_deg(ledge))
+
+    # An edge already chamfered at 45 degrees reads as relieved, which is what
+    # bed_chamfer uses the number for.
+    relieved = _corner(
+        first_normal=(0.0, 0.0, -1.0),
+        second_normal=(0.7071067811865476, 0.0, -0.7071067811865476),
+        first_interior=(-1.0, 0.0, 0.0),
+        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+    )
+    angle = fg.interior_angle_deg(relieved)
+    check("an already-chamfered edge reads as relieved",
+          angle is not None and angle > 100.0, angle)
+
+    # Sliding along the edge says nothing about which side of the other face
+    # you are on, so it must not sway the answer.
+    skewed = _corner(
+        first_normal=(0.0, 0.0, 1.0), second_normal=(1.0, 0.0, 0.0),
+        first_interior=(-1.0, 8.0, 0.0),
+        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+    )
+    check("the component along the edge is ignored",
+          close(fg.interior_angle_deg(skewed), 90.0, 1e-6),
+          fg.interior_angle_deg(skewed))
+
+
+# -- sizing a ledge gusset -------------------------------------------------
+
+
+def test_ledge_gusset():
+    print("sizing a ledge gusset")
+
+    up = (0.0, 0.0, 1.0)
+
+    # A gusset is sized by the ledge, not by a setting: it has to reach the
+    # outer edge of the underside or part of it stays flat.
+    planes = adsk.core.SurfaceTypes.PlaneSurfaceType
+    wall = _FakeFace("wall", planes, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    underside = _FakeFace("under", planes, (0.0, 0.0, -1.0), (0.3, 0.0, 1.0))
+    _straight_edge(underside, (0.0, 0.0, 1.0), (0.0, 2.0, 1.0))
+    _straight_edge(underside, (0.6, 0.0, 1.0), (0.6, 2.0, 1.0))
+    check("projection is measured out from the wall plane",
+          close(ledge_gusset._projection_mm(underside, wall, (1.0, 0.0, 0.0)), 6.0),
+          ledge_gusset._projection_mm(underside, wall, (1.0, 0.0, 0.0)))
+
+    # How far the wall runs below the ledge is what tells a ledge's inner edge
+    # from its outer one. The face at the outer edge rises from it and has
+    # nothing underneath, so there is nothing to build a gusset against.
+    inner = _straight_edge(wall, (0.0, 0.0, 1.0), (0.0, 2.0, 1.0))
+    _straight_edge(wall, (0.0, 0.0, 0.0), (0.0, 2.0, 0.0))
+    check("wall depth below the ledge is measured",
+          close(ledge_gusset._wall_depth_mm(wall, inner, up), 10.0),
+          ledge_gusset._wall_depth_mm(wall, inner, up))
+
+    outer = _FakeFace("outer", planes, (1.0, 0.0, 0.0), (0.6, 0.0, 1.0))
+    lip = _straight_edge(outer, (0.6, 0.0, 1.0), (0.6, 2.0, 1.0))
+    _straight_edge(outer, (0.6, 0.0, 1.5), (0.6, 2.0, 1.5))
+    check("a face that only rises from the edge offers no depth",
+          ledge_gusset._wall_depth_mm(outer, lip, up) <= 0.0,
+          ledge_gusset._wall_depth_mm(outer, lip, up))
+
+    # The clearance probe is what "avoid adjoining parts" comes down to, and
+    # it doubles as the already-gusseted test.
+    solid = _FusionObject(
+        pointContainment=lambda point: (
+            adsk.fusion.PointContainment.PointInsidePointContainment
+        )
+    )
+    empty = _FakeBody()
+    check("an empty corner is clear",
+          ledge_gusset._space_is_clear(empty, inner, (1.0, 0.0, 0.0), up, 5.0))
+    check("a corner that is already solid is not",
+          not ledge_gusset._space_is_clear(solid, inner, (1.0, 0.0, 0.0), up, 5.0))
+
+    check("the rule expects its chamfer to add material",
+          chamfer_op.ADDS != chamfer_op.REMOVES)
+
+
+def _straight_edge(face, start, end):
+    edge = _FusionObject(
+        entityToken="edge-{}-{}".format(start, end),
+        geometry=_FusionObject(curveType=adsk.core.Curve3DTypes.Line3DCurveType),
+        faces=_Collection([face]),
+        startVertex=_FusionObject(geometry=adsk.core.Point3D.create(*start)),
+        endVertex=_FusionObject(geometry=adsk.core.Point3D.create(*end)),
+        pointOnEdge=adsk.core.Point3D.create(
+            *[(a + b) / 2.0 for a, b in zip(start, end)]
+        ),
+    )
+    face.edges.append(edge)
+    return edge
+
+
 # -- where the teardrop cut runs -------------------------------------------
 #
 # Enough fake topology to walk, and no more: faces that know their surface
@@ -542,9 +694,9 @@ def test_grouping():
     plate = _FusionObject(parentComponent=first)
     bracket = _FusionObject(parentComponent=second)
 
-    def job(name, body):
+    def job(name, body, size=0.3):
         finding = Finding(name, "bed_chamfer", name)
-        return (finding, [_FusionObject(body=body)])
+        return (finding, [_FusionObject(body=body)], size)
 
     jobs = [job("a", plate), job("b", bracket), job("c", plate)]
 
@@ -562,7 +714,19 @@ def test_grouping():
     # One feature over many edges is what keeps the other findings' edges
     # valid, so the order findings were reported in has to survive grouping.
     check("order is preserved",
-          [finding.id for finding, _edges in grouped[0][1]] == ["a", "c"])
+          [finding.id for finding, _edges, _size in grouped[0][1]] == ["a", "c"])
+
+    # A gusset is sized by the ledge it sits under, so one batch can carry
+    # several distances. A chamfer feature holds more than one edge set, which
+    # keeps them in a single feature -- and that is what stops the first one
+    # invalidating the edges the rest are holding.
+    mixed = [job("a", plate, 0.3), job("b", plate, 1.2), job("c", plate, 0.3)]
+    sets = chamfer_op._by_size([(f, e, s) for f, e, s in mixed])
+    check("one edge set per distinct distance", len(sets) == 2)
+    check("edges wanting the same distance share a set",
+          [len(edges) for edges, _size in sets] == [2, 1])
+    check("distances are carried through",
+          [size for _edges, size in sets] == [0.3, 1.2])
 
     # A component Fusion will not give a token for still has to group, or the
     # whole rule fails over a missing string.
@@ -691,8 +855,8 @@ def test_parity():
 
 for test in (test_teardrop, test_vectors, test_units, test_distances,
              test_signatures, test_params, test_findings, test_catalogue,
-             test_reveal, test_teardrop_cut_span, test_silence_is_explained,
-             test_grouping,
+             test_reveal, test_convexity, test_ledge_gusset,
+             test_teardrop_cut_span, test_silence_is_explained, test_grouping,
              test_document_identity, test_parity):
     test()
 

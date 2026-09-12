@@ -214,7 +214,7 @@ def apply(context, findings, params):
                 finding.id, finding.detail or "Nothing to chamfer on this bore."
             ))
             continue
-        jobs.append((finding, finding.entities))
+        jobs.append((finding, finding.entities, params["size_mm"]))
     return outcomes + chamfer_op.apply_chamfer(
-        context, jobs, params["size_mm"], description="lead-in"
+        context, jobs, description="lead-in", expect=chamfer_op.REMOVES
     )

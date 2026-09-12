@@ -259,6 +259,13 @@ def cylinder_axial_length(face):
 # -- edges -----------------------------------------------------------------
 
 
+def is_straight(edge):
+    try:
+        return edge.geometry.curveType == adsk.core.Curve3DTypes.Line3DCurveType
+    except Exception:
+        return False
+
+
 def is_circular(edge):
     try:
         return edge.geometry.curveType == adsk.core.Curve3DTypes.Circle3DCurveType
@@ -288,12 +295,15 @@ def edge_length(edge):
 
 
 def edge_midpoint(edge):
-    evaluator = edge.evaluator
-    ok, start, end = evaluator.getParameterExtents()
-    if ok:
-        ok, point = evaluator.getPointAtParameter((start + end) / 2.0)
+    try:
+        evaluator = edge.evaluator
+        ok, start, end = evaluator.getParameterExtents()
         if ok:
-            return point_tuple(point)
+            ok, point = evaluator.getPointAtParameter((start + end) / 2.0)
+            if ok:
+                return point_tuple(point)
+    except Exception:
+        pass
     # pointOnEdge is not the midpoint, but it is on the edge, which is all the
     # thin-wall probe actually needs.
     return point_tuple(edge.pointOnEdge)
@@ -323,29 +333,68 @@ def interior_angle_deg(edge):
     """The material-side angle between the two faces meeting at an edge.
 
     90 for a sharp box corner, 135 where a 45 degree chamfer has already been
-    cut, near 180 where a fillet runs tangentially into the face. One number
-    therefore answers "is this edge already relieved?" for both chamfers and
-    fillets, which is why the rules ask for it rather than testing tangency
-    separately.
+    cut, near 180 where a fillet runs tangentially into the face, 270 for the
+    internal corner under a ledge. One number therefore answers "is this edge
+    already relieved?" for chamfers and fillets alike, and separately says
+    which way a chamfer on it would move material.
+
+    Convexity cannot be decided by stepping along the two outward normals
+    combined: that direction leaves the solid at a convex corner *and* at a
+    concave one, where it points into the pocket. What does distinguish them
+    is walking off the edge across one face and asking which side of the
+    other face you end up on.
     """
     faces = edge.faces
     if faces.count < 2:
         return None
+    first_face, second_face = faces.item(0), faces.item(1)
     midpoint = edge_midpoint(edge)
     try:
-        first = outward_normal(faces.item(0), nearest_point_on_face(faces.item(0), midpoint))
-        second = outward_normal(faces.item(1), nearest_point_on_face(faces.item(1), midpoint))
+        first = outward_normal(first_face, nearest_point_on_face(first_face, midpoint))
+        second = outward_normal(second_face, nearest_point_on_face(second_face, midpoint))
     except Exception:
         return None
 
     between = geo.angle_between_deg(first, second)
-    outward = geo.add(first, second)
-    if geo.length(outward) == 0.0:
+    if between == 0.0:
         return 180.0
-    probe = geo.add(midpoint, geo.scale(geo.normalise(outward), _PROBE_DISTANCE))
-    if is_outside(edge.body, probe):
-        return 180.0 - between   # convex: a corner you could chamfer
-    return 180.0 + between       # concave: an internal corner
+
+    inward = _across_face(first_face, edge, midpoint)
+    if inward is None:
+        return None
+    # Crossing the first face takes you *out* of the second face's half-space
+    # when the material closes up behind you -- a convex corner. Staying
+    # inside it means the solid opens out around you, which is a concave one.
+    if geo.dot(inward, second) < 0.0:
+        return 180.0 - between
+    return 180.0 + between
+
+
+def _across_face(face, edge, from_point):
+    """A direction leading off the edge into the face, along the face."""
+    try:
+        interior = point_tuple(face.pointOnFace)
+    except Exception:
+        return None
+    offset = geo.subtract(interior, from_point)
+    tangent = edge_tangent(edge)
+    if tangent is not None:
+        # Only the part crossing the edge says anything; sliding along it says
+        # nothing about which side of the other face you are on.
+        offset = geo.subtract(offset, geo.scale(tangent, geo.dot(offset, tangent)))
+    if geo.length(offset) == 0.0:
+        return None
+    return geo.normalise(offset)
+
+
+def edge_tangent(edge):
+    """Direction along a straight edge, or None if its ends coincide."""
+    try:
+        start = point_tuple(edge.startVertex.geometry)
+        end = point_tuple(edge.endVertex.geometry)
+        return geo.normalise(geo.subtract(end, start))
+    except Exception:
+        return None
 
 
 def nearest_point_on_face(face, point):
@@ -418,6 +467,21 @@ def is_native_body(body):
         return body.assemblyContext is None
     except Exception:
         return True
+
+
+def find_body(component, name):
+    """Look a body up again after a feature has regenerated it."""
+    try:
+        return component.bRepBodies.itemByName(name)
+    except Exception:
+        return None
+
+
+def body_volume(body):
+    try:
+        return body.volume
+    except Exception:
+        return None
 
 
 def parent_component(body):

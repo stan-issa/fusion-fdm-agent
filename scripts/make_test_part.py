@@ -21,6 +21,12 @@ What each rule should say about the result:
                  through the second body is crossed by a 4 mm hole, so it is
                  no longer a complete cylinder and must be reported as found
                  but not automatically fixable.
+
+  ledge_gusset   The shelf projecting from the plate's left wall has a flat
+                 underside 8 mm above the bed, which is a 90 degree overhang.
+                 Its inner edge should be found and its outer edge should not:
+                 the face at the outer edge rises from it, so there is nothing
+                 underneath to build a gusset against.
 """
 
 import traceback
@@ -57,6 +63,7 @@ def run(context):
 
         plate = _plate(root)
         _fin(root, plate)
+        _ledge(root, plate)
         _vertical_holes(root, plate)
         _horizontal_bore(root, plate, x=45.0)
 
@@ -68,9 +75,9 @@ def run(context):
 
         ui.messageBox(
             "Test part built.\n\n"
-            "Two bodies on the bed: a plate with a 0.8 mm fin, two plain 5 mm "
-            "holes, {}, and a clean 8 mm horizontal bore; and a block whose "
-            "8 mm bore is cross-drilled.\n\n"
+            "Two bodies on the bed: a plate with a 0.8 mm fin, a projecting "
+            "shelf, two plain 5 mm holes, {}, and a clean 8 mm horizontal "
+            "bore; and a block whose 8 mm bore is cross-drilled.\n\n"
             "Open the FDM Agent panel and press Check model.".format(
                 "a threaded 5 mm hole" if threaded
                 else "a 5 mm hole the thread could not be added to"
@@ -132,6 +139,38 @@ def _fin(root, plate):
         False, adsk.core.ValueInput.createByReal(mm(PLATE[2]))
     )
     root.features.extrudeFeatures.add(extrude_input)
+
+
+LEDGE = (6.0, 12.0, 8.0)   # projection, width, height of its underside
+
+
+def _ledge(root, plate):
+    """A shelf projecting from the left wall, with a flat underside over air.
+
+    The overhang ledge_gusset exists for. It is deliberately well clear of the
+    bed, so the underside is genuinely hanging rather than resting on it.
+    """
+    projection, width, height = LEDGE
+    sketch = root.sketches.add(root.xYConstructionPlane)
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(
+        adsk.core.Point3D.create(mm(-projection), mm(14.0), 0),
+        adsk.core.Point3D.create(0, mm(14.0 + width), 0),
+    )
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(
+        sketch.profiles.item(0), adsk.fusion.FeatureOperations.JoinFeatureOperation
+    )
+    extrude_input.participantBodies = [plate]
+    # Offset upwards so the shelf floats: an underside sitting on the bed is
+    # what the part stands on, not an overhang, and the rule must tell them
+    # apart.
+    extrude_input.startExtent = adsk.fusion.OffsetStartDefinition.create(
+        adsk.core.ValueInput.createByReal(mm(height))
+    )
+    extrude_input.setDistanceExtent(
+        False, adsk.core.ValueInput.createByReal(mm(6.0))
+    )
+    extrudes.add(extrude_input)
 
 
 def _vertical_holes(root, body):

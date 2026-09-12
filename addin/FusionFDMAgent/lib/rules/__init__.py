@@ -7,14 +7,15 @@ would make adding one feel like a project.
 Order matters here. It is the order fixes are applied in, and it runs from the
 most destructive change to the least, because each feature regenerates the
 body and rewrites the edges the later rules were aiming at. Teardropping a
-bore destroys the entrance ring a lead-in would have chamfered; chamfering the
-footprint rewrites every edge of the bottom face. Going the other way round
-would leave the second rule pointing at geometry that no longer exists.
+bore destroys the entrance ring a lead-in would have chamfered; a gusset can
+reach the bottom of the part and move the footprint; chamfering the footprint
+rewrites every edge of the bottom face. Going the other way round would leave
+the later rule pointing at geometry that no longer exists.
 """
 
-from . import bed_chamfer, hole_lead_in, teardrop_bore
+from . import bed_chamfer, hole_lead_in, ledge_gusset, teardrop_bore
 
-RULES = (teardrop_bore, hole_lead_in, bed_chamfer)
+RULES = (teardrop_bore, hole_lead_in, ledge_gusset, bed_chamfer)
 
 BY_ID = {rule.ID: rule for rule in RULES}
 
