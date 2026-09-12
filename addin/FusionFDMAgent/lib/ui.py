@@ -6,6 +6,7 @@ start fail on a duplicate ID. ``stop`` therefore removes everything it can and
 never raises, and ``start`` also clears any leftovers before creating its own.
 """
 
+import pathlib
 import traceback
 
 import adsk.core
@@ -182,5 +183,10 @@ def _safe_delete(item):
 
 
 def _file_url(path):
-    """Fusion wants a URL for palette content, not a filesystem path."""
-    return "file://" + path
+    """Fusion wants a URL for palette content, not a filesystem path.
+
+    Percent-encoding is not optional here. The add-in is normally loaded through
+    a symlink under "Application Support", so the path it reports for itself
+    contains spaces, and a naively concatenated file:// URL fails to load.
+    """
+    return pathlib.Path(path).as_uri()
