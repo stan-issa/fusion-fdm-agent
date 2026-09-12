@@ -170,6 +170,58 @@ select {
 
 .msg.tool .tool-name { font-weight: 600; }
 
+/* Approval card ------------------------------------------------------- */
+
+.msg.approval {
+  align-self: stretch;
+  max-width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  padding: 0;
+  overflow: hidden;
+}
+
+.approval-title {
+  padding: 7px 10px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.approval-body {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  background: var(--bg-sunken);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.approval-actions button { flex: 1 1 auto; }
+
+button.secondary {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.approval-outcome {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
 /* A blinking caret while tokens are still arriving. */
 .msg.streaming::after {
   content: "▍";

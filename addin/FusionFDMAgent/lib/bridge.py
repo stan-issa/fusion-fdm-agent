@@ -19,7 +19,7 @@ from .logging_util import get_logger
 from .sidecar import SidecarError, SidecarProcess
 
 # Messages the sidecar may emit that we pass straight through to the palette.
-_PASSTHROUGH_ACTIONS = ("delta", "toolUse", "turnEnd", "log")
+_PASSTHROUGH_ACTIONS = ("delta", "toolUse", "turnEnd", "log", "approvalRequest")
 
 
 class _IncomingHandler(adsk.core.HTMLEventHandler):
@@ -42,9 +42,10 @@ class _IncomingHandler(adsk.core.HTMLEventHandler):
 class ChatBridge:
     """Owns the palette conversation and the sidecar that answers it."""
 
-    def __init__(self, palette, pump):
+    def __init__(self, palette, pump, tool_server=None):
         self._palette = palette
         self._pump = pump
+        self._tool_server = tool_server
         self._log = get_logger()
         self._settings = config.load_settings()
         self._status = "starting"
@@ -56,7 +57,17 @@ class ChatBridge:
         self._sidecar = SidecarProcess(
             on_message=self._on_sidecar_message,
             on_exit=self._on_sidecar_exit,
+            extra_env=self._tool_env(),
         )
+
+    def _tool_env(self):
+        """How the sidecar reaches Fusion, and proves it is allowed to."""
+        if self._tool_server is None or self._tool_server.port is None:
+            return {}
+        return {
+            "FDM_AGENT_TOOL_PORT": str(self._tool_server.port),
+            "FDM_AGENT_TOOL_TOKEN": self._tool_server.token,
+        }
 
     # -- palette -> here ---------------------------------------------------
 
@@ -82,6 +93,12 @@ class ChatBridge:
             self._set_backend(payload.get("backend"))
         elif action == "restart":
             self._restart()
+        elif action == "approvalReply":
+            self._forward({
+                "action": "approvalResponse",
+                "id": payload.get("id"),
+                "allow": bool(payload.get("allow")),
+            })
         else:
             self._log.warning("unknown palette action %r", action)
 
@@ -105,6 +122,9 @@ class ChatBridge:
     def _restart(self):
         self._log.info("restarting sidecar on palette request")
         self._sidecar.stop()
+        # The port and token are regenerated whenever the add-in restarts, so
+        # re-read them rather than reusing what the process was spawned with.
+        self._sidecar.set_extra_env(self._tool_env())
         self._start_sidecar()
 
     def _forward(self, message):
@@ -177,7 +197,7 @@ class ChatBridge:
         elif action in _PASSTHROUGH_ACTIONS:
             payload = dict(message)
             payload.pop("action", None)
-            self._to_html(action, payload)
+            self._to_html("approval" if action == "approvalRequest" else action, payload)
         else:
             self._log.warning("unknown sidecar action %r", action)
 

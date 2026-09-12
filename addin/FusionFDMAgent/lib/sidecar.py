@@ -30,9 +30,10 @@ class SidecarProcess:
     to the main thread before touching anything Fusion owns.
     """
 
-    def __init__(self, on_message, on_exit):
+    def __init__(self, on_message, on_exit, extra_env=None):
         self._on_message = on_message
         self._on_exit = on_exit
+        self._extra_env = dict(extra_env or {})
         self._process = None
         self._stdout_thread = None
         self._stderr_thread = None
@@ -42,6 +43,10 @@ class SidecarProcess:
 
     def is_running(self):
         return self._process is not None and self._process.poll() is None
+
+    def set_extra_env(self, extra_env):
+        """Replace the extra environment used for the next spawn."""
+        self._extra_env = dict(extra_env or {})
 
     def start(self):
         """Spawn the sidecar. Raises SidecarError if it cannot be launched."""
@@ -67,6 +72,8 @@ class SidecarProcess:
         env["FDM_AGENT_WORKSPACE"] = config.WORKSPACE_DIR
         env["FDM_AGENT_LOG_FILE"] = config.SIDECAR_LOG_FILE
         env["FDM_AGENT_SETTINGS"] = config.SETTINGS_FILE
+        # Where to reach Fusion, and the token proving the caller is us.
+        env.update(self._extra_env)
 
         self._stopping = False
         try:

@@ -21,7 +21,7 @@ import importlib.util
 import os
 import shutil
 
-from .. import protocol
+from .. import fusion_client, fusion_tools, protocol
 from ..settings import backend_settings
 from .base import Availability, Backend, summarise_input
 
@@ -43,15 +43,42 @@ anisotropy, overhang angles and support, wall count and infill against \
 strength, shrinkage and warping, bridging, elephant's foot, and tolerances for \
 holes and mating parts.
 
-You do not yet have access to the live Fusion document. You cannot read the \
-design tree, inspect parameters, or modify geometry. If a question needs \
-something only the open model can tell you, ask the user for it rather than \
-assuming. Do not claim to have inspected their design.
-
-Your working directory is a scratch folder, not the user's project. Use it \
-freely for notes and calculations.
-
 Keep replies short and concrete. This is a narrow side panel, not a document.\
+"""
+
+_FUSION_PROMPT = """\
+
+You have live access to the open Fusion document:
+
+- get_design_tree and get_parameters read it. Call them before reasoning about \
+  the user's model; do not guess at dimensions or structure, and do not claim \
+  to have looked at something you have not.
+- set_parameter changes one parameter's expression.
+- run_fusion_script executes Python against the Fusion API in the running \
+  application.
+
+The last two change the user's document and each one asks them to approve it \
+first, so:
+
+- Prefer set_parameter over a script whenever the parameter already exists.
+- Keep scripts short and readable. The user is reading them in a narrow panel \
+  to decide whether to allow them, so a wall of code is a wall they cannot \
+  check.
+- Do one coherent change per script rather than batching unrelated edits, so a \
+  refusal costs only the part they objected to.
+- Say what you are about to do and why before calling them.
+- If the user declines, do not retry the same call. Ask what they would prefer.
+
+Fusion's API works in centimetres internally. Design tree values are already \
+converted to millimetres; anything you compute in a script is not.\
+"""
+
+_NO_FUSION_PROMPT = """\
+
+You do not currently have access to the live Fusion document, so you cannot \
+read the design tree, inspect parameters or change geometry. If a question \
+needs something only the open model can tell you, ask the user rather than \
+assuming.\
 """
 
 
@@ -96,10 +123,11 @@ class ClaudeCodeBackend(Backend):
     name = "claude"
     label = "Claude Code"
 
-    def __init__(self, emit, workspace):
-        super().__init__(emit, workspace)
+    def __init__(self, emit, workspace, approve=None):
+        super().__init__(emit, workspace, approve)
         self._client = None
         self._settings = backend_settings(self.name)
+        self._fusion_connected = False
 
     # -- availability ------------------------------------------------------
 
@@ -130,7 +158,20 @@ class ClaudeCodeBackend(Backend):
         if self._settings.get("allowBash"):
             tools.append("Bash")
 
+        # Only advertise the design tools when the add-in actually gave us a
+        # way to reach Fusion. Offering them standalone would have the model
+        # confidently describing a document it cannot see.
+        self._fusion_connected = fusion_client.configured()
+
         prompt = _SYSTEM_PROMPT
+        mcp_servers = {}
+        if self._fusion_connected:
+            prompt += _FUSION_PROMPT
+            tools.extend(fusion_tools.ALLOWED_TOOLS)
+            mcp_servers[fusion_tools.SERVER_NAME] = fusion_tools.build_server()
+        else:
+            prompt += _NO_FUSION_PROMPT
+
         extra = (self._settings.get("systemPromptExtra") or "").strip()
         if extra:
             prompt = prompt + "\n\n" + extra
@@ -139,6 +180,8 @@ class ClaudeCodeBackend(Backend):
             "cwd": self.workspace,
             "system_prompt": prompt,
             "allowed_tools": tools,
+            "mcp_servers": mcp_servers,
+            "can_use_tool": self._can_use_tool,
             # Runs pre-approved tools, denies the rest. Never blocks on a
             # prompt nobody is there to answer.
             "permission_mode": "dontAsk",
@@ -150,6 +193,27 @@ class ClaudeCodeBackend(Backend):
             options["model"] = model
         return ClaudeAgentOptions(**options)
 
+    async def _can_use_tool(self, tool_name, tool_input, context):
+        """Gate tool calls that would change the user's document.
+
+        Everything else is allowed outright -- the allowed_tools list already
+        decides what exists, and prompting for a read would only train the
+        user to click through.
+        """
+        from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+        if tool_name not in fusion_tools.MUTATING_TOOLS:
+            return PermissionResultAllow()
+        if self._settings.get("autoApprove"):
+            return PermissionResultAllow()
+
+        if await self.approve(tool_name, tool_input):
+            return PermissionResultAllow()
+        return PermissionResultDeny(
+            message="The user declined this change. Ask what they would prefer "
+                    "instead of retrying."
+        )
+
     async def start(self) -> None:
         from claude_agent_sdk import ClaudeSDKClient
 
@@ -160,7 +224,9 @@ class ClaudeCodeBackend(Backend):
         except Exception:
             self._client = None
             raise
-        self.log("info", "claude backend connected (cwd={})".format(self.workspace))
+        self.log("info", "claude backend connected (cwd={}, fusion={})".format(
+            self.workspace, "yes" if self._fusion_connected else "no"
+        ))
 
     async def stop(self) -> None:
         client, self._client = self._client, None

@@ -99,6 +99,7 @@
       case "state":   applyState(payload); break;
       case "delta":   appendDelta(payload); break;
       case "toolUse": appendTool(payload); break;
+      case "approval": appendApproval(payload); break;
       case "turnEnd": endTurn(payload); break;
       case "log":     console.log("[sidecar]", payload.level, payload.message); break;
       default:        console.warn("[fdm-agent] unknown action", action);
@@ -193,6 +194,82 @@
     scrollToEnd();
   }
 
+  /*
+   * An approval card. This is the one place the user decides whether the
+   * agent may change their document, so it shows the request verbatim --
+   * scripts as code, never summarised -- rather than a reassuring paraphrase.
+   */
+  function appendApproval(payload) {
+    var node = bubble("approval", "");
+
+    var title = document.createElement("div");
+    title.className = "approval-title";
+    title.textContent = approvalTitle(payload);
+    node.appendChild(title);
+
+    var body = document.createElement("pre");
+    body.className = "approval-body";
+    body.textContent = approvalBody(payload);
+    node.appendChild(body);
+
+    var actions = document.createElement("div");
+    actions.className = "approval-actions";
+
+    var allow = document.createElement("button");
+    allow.type = "button";
+    allow.textContent = "Allow";
+
+    var deny = document.createElement("button");
+    deny.type = "button";
+    deny.className = "secondary";
+    deny.textContent = "Deny";
+
+    function decide(allowed) {
+      toPython("approvalReply", { id: payload.id, allow: allowed });
+      actions.remove();
+      var outcome = document.createElement("div");
+      outcome.className = "approval-outcome";
+      outcome.textContent = allowed ? "Allowed" : "Denied";
+      node.appendChild(outcome);
+      node.dataset.resolved = "1";
+    }
+
+    allow.addEventListener("click", function () { decide(true); });
+    deny.addEventListener("click", function () { decide(false); });
+    actions.appendChild(allow);
+    actions.appendChild(deny);
+    node.appendChild(actions);
+
+    // A later delta belongs in its own bubble, not appended to this card.
+    if (activeBubble) {
+      activeBubble.classList.remove("streaming");
+    }
+    activeBubble = null;
+    scrollToEnd();
+  }
+
+  function approvalTitle(payload) {
+    var name = (payload.tool || "").replace(/^mcp__fusion__/, "");
+    if (name === "run_fusion_script") {
+      return "Run this script in Fusion?";
+    }
+    if (name === "set_parameter") {
+      return "Change a parameter?";
+    }
+    return "Allow " + name + "?";
+  }
+
+  function approvalBody(payload) {
+    var input = payload.input || {};
+    if (typeof input.code === "string") {
+      return input.code;
+    }
+    if (typeof input.name === "string" && input.expression !== undefined) {
+      return input.name + " = " + input.expression;
+    }
+    return JSON.stringify(input, null, 2);
+  }
+
   function summarise(value) {
     var text = typeof value === "string" ? value : JSON.stringify(value);
     return text.length > 300 ? text.slice(0, 300) + "…" : text;
@@ -207,6 +284,21 @@
     el.log.querySelectorAll(".streaming").forEach(function (node) {
       node.classList.remove("streaming");
     });
+    // The sidecar denies anything still outstanding when a turn ends, so a
+    // card left with live buttons would be a lie.
+    el.log.querySelectorAll(".msg.approval:not([data-resolved])").forEach(
+      function (node) {
+        var actions = node.querySelector(".approval-actions");
+        if (actions) {
+          actions.remove();
+        }
+        node.dataset.resolved = "1";
+        var outcome = document.createElement("div");
+        outcome.className = "approval-outcome";
+        outcome.textContent = "Expired";
+        node.appendChild(outcome);
+      }
+    );
     if (payload.error) {
       bubble("error", payload.error);
     }

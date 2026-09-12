@@ -17,6 +17,10 @@ DEFAULTS: dict[str, Any] = {
     "allowBash": False,
     # Appended to the built-in system prompt.
     "systemPromptExtra": "",
+    # Skip the approval prompt for tools that change the design. Off by
+    # default: run_fusion_script executes arbitrary code against the open
+    # document.
+    "autoApprove": False,
 }
 
 

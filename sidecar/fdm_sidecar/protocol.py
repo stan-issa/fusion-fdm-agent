@@ -9,6 +9,7 @@ see docs/PROTOCOL.md.
 IN_SEND = "send"
 IN_CANCEL = "cancel"
 IN_SET_BACKEND = "setBackend"
+IN_APPROVAL_RESPONSE = "approvalResponse"
 
 # Sidecar -> add-in
 OUT_READY = "ready"
@@ -17,6 +18,7 @@ OUT_DELTA = "delta"
 OUT_TOOL_USE = "toolUse"
 OUT_TURN_END = "turnEnd"
 OUT_LOG = "log"
+OUT_APPROVAL_REQUEST = "approvalRequest"
 
 
 def ready(backend, backends):
@@ -49,3 +51,12 @@ def turn_end(turn_id, error=None):
 
 def log(level, message):
     return {"action": OUT_LOG, "level": level, "message": message}
+
+
+def approval_request(request_id, tool, tool_input):
+    return {
+        "action": OUT_APPROVAL_REQUEST,
+        "id": request_id,
+        "tool": tool,
+        "input": tool_input,
+    }

@@ -3,11 +3,28 @@
 An Autodesk Fusion add-in that puts a **chat panel** in the Design workspace and
 wires it to an external coding agent (Claude Code, or Codex later).
 
-Status: the **Claude Code backend works** — streaming replies, tool-use display
-and cancellation, in a persistent session. Design read/write (letting the agent
-inspect and modify the open model) is the next pass; see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). A stub `echo` backend is kept for
-testing the plumbing without a model, and Codex is detection-only.
+Status: **working**. The agent reads the open design and can change it — with
+your approval for anything that modifies the document. A stub `echo` backend is
+kept for testing the plumbing without a model; Codex is detection-only.
+
+## What the agent can do
+
+| Tool | Effect | Approval |
+| --- | --- | --- |
+| `get_design_tree` | Components, bodies (bounding boxes and volumes in mm), sketch names | no |
+| `get_parameters` | User and named model parameters, with expressions and units | no |
+| `set_parameter` | Change one parameter's expression | **yes** |
+| `run_fusion_script` | Execute Python against the live Fusion API | **yes** |
+
+Approval is a card in the panel showing the request verbatim — the script as
+code, not a summary — with Allow and Deny. Denying tells the agent to ask rather
+than retry. Nothing that changes your document happens without you clicking.
+
+`run_fusion_script` runs arbitrary code inside Fusion with the full API, so it
+can do anything you could. That is the point of it, and the reason it is gated.
+Changes go through Fusion's normal timeline, so undo works as usual — but read
+the script before allowing it. `claude.autoApprove` turns the gate off; think
+before you set it.
 
 ## Requirements
 
@@ -31,7 +48,7 @@ testing the plumbing without a model, and Codex is detection-only.
 ./scripts/bootstrap.sh   # sidecar venv + ~/.fusion-fdm-agent
 ./scripts/install.sh     # copy the add-in into Fusion
 ./scripts/doctor.sh      # verify everything above
-./scripts/test.sh        # round-trip test, no Fusion needed
+./scripts/test.sh        # test suite, no Fusion needed
 ```
 
 Then in Fusion: **Utilities → Add-Ins** (`Shift+S`) → `FusionFDMAgent` → **Run**.
@@ -64,7 +81,8 @@ is written when you change the backend in the panel, and can be edited by hand:
   "claude": {
     "model": null,
     "allowBash": false,
-    "systemPromptExtra": ""
+    "systemPromptExtra": "",
+    "autoApprove": false
   }
 }
 ```
@@ -79,6 +97,9 @@ is written when you change the backend in the panel, and can be edited by hand:
   command can reach.
 - `claude.systemPromptExtra` — appended to the built-in prompt. Put your printer,
   materials and tolerances here.
+- `claude.autoApprove` — off by default. Skips the approval card for
+  `set_parameter` and `run_fusion_script`, which means generated code runs
+  against your open document unseen.
 
 Restart the add-in (Stop → Run) after editing.
 
@@ -95,10 +116,16 @@ changes, then **Add-Ins → Stop → Run** in Fusion.
 > drops the stale entry from Fusion's registry (backing the file up first).
 > `./scripts/doctor.sh` checks for both conditions.
 
-`./scripts/test.sh` drives the whole chain — palette → bridge → sidecar → pump →
-palette — with only Fusion's UI objects stubbed. It fails if the reply stops
-arriving incrementally, which is the regression that matters: a pump that drains
-on the producer's thread would still "work" in a naive test and deadlock Fusion.
+`./scripts/test.sh` runs three suites with only Fusion's UI objects stubbed:
+
+- **round trip** — palette → bridge → sidecar → pump → palette. Fails if the
+  reply stops arriving incrementally, which is the regression that matters: a
+  pump draining on the producer's thread would still "work" in a naive test and
+  deadlock Fusion.
+- **tool path** — the add-in's loopback server against the sidecar's real
+  client, covering the token check and the hop onto the main thread.
+- **approvals** — that a prompt nobody answers, and a turn cancelled mid-prompt,
+  both come back as refusals rather than parking the agent forever.
 
 `FDM_AGENT_BACKEND` overrides which backend the sidecar starts on, which is how
 the test pins itself to the stub instead of making billable model calls.
@@ -138,10 +165,14 @@ addin/FusionFDMAgent/   the add-in (stdlib only)
   lib/bridge.py         palette ⇄ sidecar message router
   lib/events.py         background thread → main thread pump
   lib/sidecar.py        subprocess supervision
+  lib/toolserver.py     loopback server the sidecar calls into
+  lib/design_tools.py   the Fusion operations themselves
   resources/palette/    the chat UI
 sidecar/fdm_sidecar/    the agent process
   backends/             claude (working), echo (stub), codex (detection only)
-tests/                  round-trip test + stubbed `adsk`
+  fusion_tools.py       those operations as in-process MCP tools
+  fusion_client.py      loopback client
+tests/                  round-trip, tool path, approvals + stubbed `adsk`
 scripts/                bootstrap, install, uninstall, doctor, test,
                         fix-duplicate-registration
 ```

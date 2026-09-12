@@ -12,9 +12,11 @@ import traceback
 import adsk.core
 
 from .. import config
+from . import design_tools
 from .bridge import ChatBridge
 from .events import MainThreadPump
 from .logging_util import get_logger
+from .toolserver import ToolCall, ToolServer
 
 
 class _CommandExecuteHandler(adsk.core.CommandEventHandler):
@@ -62,6 +64,7 @@ class AddInUI:
         self._palette = None
         self._bridge = None
         self._pump = MainThreadPump(app, config.PUMP_EVENT_ID)
+        self._tool_server = ToolServer(self._pump, design_tools.REGISTRY)
 
     def retain(self, handler):
         """Keep a strong reference to an event handler for the add-in's life."""
@@ -93,6 +96,7 @@ class AddInUI:
         self._control.isPromoted = True
 
         self._pump.start(self._on_pumped)
+        self._tool_server.start()
         self._log.info("UI started")
 
     # -- palette -----------------------------------------------------------
@@ -123,16 +127,22 @@ class AddInUI:
             self._palette.dockingState = (
                 adsk.core.PaletteDockingStates.PaletteDockStateRight
             )
-            self._bridge = ChatBridge(self._palette, self._pump)
+            self._bridge = ChatBridge(self._palette, self._pump, self._tool_server)
             self._palette.isVisible = True
             self._log.info("palette created")
         else:
             self._palette.isVisible = True
 
-    def _on_pumped(self, message):
-        """Main thread. Every off-thread message lands here."""
-        if self._bridge is not None:
-            self._bridge.deliver(message)
+    def _on_pumped(self, item):
+        """Main thread. Every off-thread message lands here.
+
+        Two kinds of traffic share the pump: messages from the sidecar, and
+        tool calls from the loopback server waiting for a Fusion API result.
+        """
+        if isinstance(item, ToolCall):
+            self._tool_server.execute(item)
+        elif self._bridge is not None:
+            self._bridge.deliver(item)
 
     # -- teardown ----------------------------------------------------------
 
@@ -144,6 +154,11 @@ class AddInUI:
             except Exception:
                 self._log.error("bridge stop failed\n%s", traceback.format_exc())
             self._bridge = None
+
+        try:
+            self._tool_server.stop()
+        except Exception:
+            self._log.error("tool server stop failed\n%s", traceback.format_exc())
 
         try:
             self._pump.stop()

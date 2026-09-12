@@ -37,15 +37,29 @@ class Backend(abc.ABC):
     #: Human-readable name shown in the palette's backend picker.
     label: str = ""
 
-    def __init__(self, emit: Callable[[dict], None], workspace: str):
+    def __init__(
+        self,
+        emit: Callable[[dict], None],
+        workspace: str,
+        approve: Optional[Callable[[str, dict], Any]] = None,
+    ):
         self._emit = emit
         self.workspace = workspace
+        # Async: (tool_name, tool_input) -> bool. Defaults to allowing, so a
+        # backend with nothing dangerous to gate needs no wiring.
+        self._approve = approve
 
     def emit(self, message: dict) -> None:
         self._emit(message)
 
     def log(self, level: str, message: str) -> None:
         self._emit(protocol.log(level, message))
+
+    async def approve(self, tool_name: str, tool_input: dict) -> bool:
+        """Ask the user to approve one tool call."""
+        if self._approve is None:
+            return True
+        return await self._approve(tool_name, tool_input)
 
     @abc.abstractmethod
     async def available(self) -> Availability:

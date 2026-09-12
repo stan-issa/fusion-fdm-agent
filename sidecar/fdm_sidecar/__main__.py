@@ -44,11 +44,58 @@ def _configure_logging() -> None:
     _LOG.setLevel(logging.DEBUG)
 
 
+class ApprovalBroker:
+    """Asks the user, via the palette, to approve one tool call.
+
+    The round trip is sidecar -> add-in -> palette -> user -> back, so the
+    waiting coroutine parks on a Future that the read loop resolves when the
+    answer arrives. A request nobody answers is denied rather than left
+    hanging: the agent gets a refusal it can report, instead of a turn that
+    never ends.
+    """
+
+    TIMEOUT_SECONDS = 300
+
+    def __init__(self, emit):
+        self._emit = emit
+        self._pending: dict[str, asyncio.Future] = {}
+        self._counter = 0
+
+    async def request(self, tool: str, tool_input: dict) -> bool:
+        self._counter += 1
+        request_id = "a{}".format(self._counter)
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending[request_id] = future
+
+        self._emit(protocol.approval_request(request_id, tool, tool_input))
+        try:
+            return await asyncio.wait_for(future, timeout=self.TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            _LOG.warning("approval %s timed out", request_id)
+            return False
+        finally:
+            self._pending.pop(request_id, None)
+
+    def resolve(self, request_id, allow: bool) -> None:
+        future = self._pending.get(request_id)
+        if future is not None and not future.done():
+            future.set_result(bool(allow))
+
+    def cancel_all(self) -> None:
+        """Deny everything outstanding, so no coroutine is left parked."""
+        for future in list(self._pending.values()):
+            if not future.done():
+                future.set_result(False)
+        self._pending.clear()
+
+
 class Sidecar:
     def __init__(self, workspace: str):
         self.workspace = workspace
+        self.approvals = ApprovalBroker(self.emit)
         self._backends = {
-            cls.name: cls(self.emit, workspace) for cls in BACKEND_CLASSES
+            cls.name: cls(self.emit, workspace, self.approvals.request)
+            for cls in BACKEND_CLASSES
         }
         self._descriptions: list[dict] = []
         self._current = None
@@ -146,6 +193,8 @@ class Sidecar:
                 _LOG.error("dispatch failed for %r\n%s", message, traceback.format_exc())
 
     async def _shutdown(self) -> None:
+        # Release approval waiters first, or their turns cannot finish.
+        self.approvals.cancel_all()
         for task in list(self._turns.values()):
             task.cancel()
         if self._turns:
@@ -163,6 +212,8 @@ class Sidecar:
             await self._cancel_turn(message.get("turnId"))
         elif action == protocol.IN_SET_BACKEND:
             await self._set_backend(message.get("backend"))
+        elif action == protocol.IN_APPROVAL_RESPONSE:
+            self.approvals.resolve(message.get("id"), message.get("allow"))
         else:
             _LOG.warning("unknown action %r", action)
 
@@ -195,6 +246,7 @@ class Sidecar:
         if task is None:
             return
         _LOG.info("cancelling turn %s", turn_id)
+        self.approvals.cancel_all()
         await self._current.cancel(turn_id)
         task.cancel()
 
