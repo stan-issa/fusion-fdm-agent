@@ -67,7 +67,20 @@ class Sidecar:
         await self._probe_backends()
 
         default = self._default_backend()
-        await self._activate(default)
+        try:
+            await self._activate(default)
+        except Exception as exc:
+            # A backend that probes as available can still fail to connect --
+            # Claude Code not signed in, for instance. Falling back to the stub
+            # keeps the panel usable and says why, instead of the sidecar dying
+            # and the palette showing only "sidecar exited".
+            _LOG.error("could not start %s\n%s", default, traceback.format_exc())
+            self._mark_unavailable(default, str(exc))
+            self.emit(protocol.log(
+                "error", "Could not start {}: {}".format(default, exc)
+            ))
+            await self._activate("echo")
+
         self.emit(protocol.ready(self._current.name, self._descriptions))
         _LOG.info("sidecar ready, backend=%s", self._current.name)
 
@@ -88,10 +101,20 @@ class Sidecar:
         self._descriptions = descriptions
 
     def _default_backend(self) -> str:
+        forced = os.environ.get("FDM_AGENT_BACKEND")
+        if forced and forced in self._backends:
+            _LOG.info("backend forced to %s by FDM_AGENT_BACKEND", forced)
+            return forced
         for description in self._descriptions:
             if description["available"]:
                 return description["name"]
         return "echo"
+
+    def _mark_unavailable(self, name: str, detail: str) -> None:
+        for description in self._descriptions:
+            if description["name"] == name:
+                description["available"] = False
+                description["detail"] = detail
 
     async def _activate(self, name: str) -> None:
         backend = self._backends.get(name)
@@ -184,6 +207,7 @@ class Sidecar:
             _LOG.info("backend switched to %s", name)
         except Exception as exc:
             _LOG.error("could not switch to %s\n%s", name, traceback.format_exc())
+            self._mark_unavailable(name, str(exc))
             self.emit(protocol.log("error", "Cannot use {}: {}".format(name, exc)))
             if previous:
                 # Leave the user on something that works rather than nothing.
@@ -196,7 +220,11 @@ class Sidecar:
 
 def main() -> int:
     _configure_logging()
-    workspace = os.environ.get("FDM_AGENT_WORKSPACE") or os.getcwd()
+    # Match what the add-in passes, so a standalone run behaves like the real
+    # one instead of pointing the agent at whatever directory you launched from.
+    workspace = os.environ.get("FDM_AGENT_WORKSPACE") or os.path.expanduser(
+        "~/.fusion-fdm-agent/workspace"
+    )
     try:
         asyncio.run(Sidecar(workspace).run())
     except KeyboardInterrupt:

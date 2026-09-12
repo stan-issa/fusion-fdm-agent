@@ -81,7 +81,15 @@ def describe(backend_class, availability: Availability) -> dict:
 
 
 def summarise_input(value: Any, limit: int = 300) -> Any:
-    """Trim tool input so a large payload cannot flood the palette."""
-    if isinstance(value, str) and len(value) > limit:
-        return value[:limit] + "…"
+    """Trim tool input so a large payload cannot flood the palette.
+
+    Tool inputs are dicts whose values can be whole file contents, so trimming
+    only a bare string would miss the case that actually matters.
+    """
+    if isinstance(value, str):
+        return value[:limit] + "…" if len(value) > limit else value
+    if isinstance(value, dict):
+        return {key: summarise_input(item, limit) for key, item in value.items()}
+    if isinstance(value, list):
+        return [summarise_input(item, limit) for item in value[:20]]
     return value

@@ -71,6 +71,11 @@ class FakePalette:
 
 
 def main() -> int:
+    # Pin the stub backend. Without this the sidecar would pick its preferred
+    # available backend -- the real Claude Code -- and this test would make
+    # billable model calls to prove something about message plumbing.
+    os.environ["FDM_AGENT_BACKEND"] = "echo"
+
     app = FakeApp()
     palette = FakePalette()
     pump = MainThreadPump(app, "fdmAgent_TestPump")

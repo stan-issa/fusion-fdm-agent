@@ -66,6 +66,7 @@ class SidecarProcess:
         env["PYTHONUNBUFFERED"] = "1"
         env["FDM_AGENT_WORKSPACE"] = config.WORKSPACE_DIR
         env["FDM_AGENT_LOG_FILE"] = config.SIDECAR_LOG_FILE
+        env["FDM_AGENT_SETTINGS"] = config.SETTINGS_FILE
 
         self._stopping = False
         try:

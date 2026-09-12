@@ -96,7 +96,7 @@ User-level state is under `~/.fusion-fdm-agent/`:
 venv/          sidecar virtualenv
 workspace/     the agent's working directory
 logs/          addin.log, sidecar.log
-settings.json  persisted backend choice
+settings.json  backend choice and per-backend options
 ```
 
 ## Installation is a copy, not a symlink
@@ -112,15 +112,46 @@ So `install.sh` copies, `doctor.sh` fails loudly on a symlinked install or a
 duplicate registry entry, and `fix-duplicate-registration.sh` cleans up a
 registry that already has one.
 
+## The Claude backend
+
+Three choices in `backends/claude_code.py` are load-bearing.
+
+**One long-lived `ClaudeSDKClient`, not `claude -p`.** Print mode is one-shot:
+continuing a conversation means a fresh process with `--resume` every turn. A
+persistent client *is* the session, and it is also the only route to in-process
+tools — which is what pass 3 needs.
+
+**`include_partial_messages=True`.** This turns on token-level `StreamEvent`
+deltas. Without it the reply arrives only as complete blocks and the palette's
+streaming is decorative. The backend still keeps the complete `TextBlock`s as a
+fallback and emits them if no deltas ever arrived, so a change in SDK behaviour
+degrades to a slow reply rather than a silent one.
+
+**`permission_mode="dontAsk"`.** Pre-approved tools run; anything else is
+denied. The tempting `"default"` blocks waiting for an approval that, in a
+headless sidecar, nobody can give — the turn would hang with no error at all.
+
+A backend that probes as available can still fail to connect, most obviously
+when Claude Code is not signed in. The sidecar catches that, marks the backend
+unavailable with the reason, and falls back to the stub, so the panel stays
+usable and explains itself instead of dying.
+
 ## Planned passes
 
 - **Pass 1 (done).** Structure, install, panel, palette, chat UI, sidecar,
   backend seam, echo backend.
-- **Pass 2.** The Claude backend on `ClaudeSDKClient`: streaming, session
-  continuity, cancellation. The Codex backend only once its CLI surface has been
-  read first-hand — the current stub deliberately does not guess at it.
-- **Pass 3.** Design read/write. `tools/` in the add-in (`get_design_tree`,
-  `get_parameters`, `set_parameter`, `run_fusion_script`), reached over a
-  loopback JSON-RPC server bound to `127.0.0.1` on a random port with a
-  per-session token. Every call is queued onto the main thread, and every
-  mutating one requires explicit confirmation in the palette first.
+- **Pass 2 (done).** The Claude backend on `ClaudeSDKClient`: streaming,
+  session continuity, cancellation via `interrupt()`, tool-use display.
+- **Pass 3.** Design read/write: `get_design_tree`, `get_parameters`,
+  `set_parameter`, `run_fusion_script`, exposed to the model as in-process SDK
+  tools via `create_sdk_mcp_server` and reaching Fusion over a loopback
+  JSON-RPC server bound to `127.0.0.1` on a random port with a per-session
+  token. Every call is queued onto the main thread.
+
+  The SDK's `can_use_tool` callback changes how confirmation can work here.
+  Rather than choosing between per-call prompts (tedious) and a blanket trust
+  toggle (wide blast radius), the callback lets the palette render a real
+  approval prompt while the model blocks on the answer — so per-call
+  confirmation stays practical.
+- **Codex.** Only once its CLI surface has been read first-hand; the current
+  stub deliberately does not guess at it.

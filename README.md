@@ -3,17 +3,27 @@
 An Autodesk Fusion add-in that puts a **chat panel** in the Design workspace and
 wires it to an external coding agent (Claude Code, or Codex later).
 
-Status: **skeleton**. The panel, palette, chat UI and sidecar all work end to
-end against a stub `echo` backend. Real agent backends and design read/write are
-the next two passes — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Status: the **Claude Code backend works** — streaming replies, tool-use display
+and cancellation, in a persistent session. Design read/write (letting the agent
+inspect and modify the open model) is the next pass; see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). A stub `echo` backend is kept for
+testing the plumbing without a model, and Codex is detection-only.
 
 ## Requirements
 
 - macOS with Autodesk Fusion installed for the current user
 - Python 3.10+ on the PATH (used to build the sidecar venv; Fusion's own
   embedded interpreter is never modified)
-- Optional: the [Claude Code CLI](https://code.claude.com/docs/en/setup) —
-  `curl -fsSL https://claude.ai/install.sh | bash`
+- A signed-in Claude Code. The Agent SDK bundles its own binary, so a separate
+  CLI install is optional, but you must be **logged in**:
+
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash   # if you do not have it
+  claude                                           # then log in, once
+  ```
+
+  Without this the panel connects but every turn ends with
+  *"Claude Code is not signed in"*.
 
 ## Install
 
@@ -43,6 +53,35 @@ in the sidecar, a separate process speaking newline-delimited JSON over stdio.
 rather than chosen, and [docs/PROTOCOL.md](docs/PROTOCOL.md) documents the wire
 format.
 
+## Configuration
+
+`~/.fusion-fdm-agent/settings.json` is shared by the add-in and the sidecar. It
+is written when you change the backend in the panel, and can be edited by hand:
+
+```json
+{
+  "backend": "claude",
+  "claude": {
+    "model": null,
+    "allowBash": false,
+    "systemPromptExtra": ""
+  }
+}
+```
+
+- `backend` — `claude`, `codex` or `echo`. Also set by the panel's dropdown.
+- `claude.model` — a model id, or `null` for whatever your Claude Code install
+  defaults to. Opus suits design reasoning; Sonnet is quicker and cheaper for a
+  chatty panel.
+- `claude.allowBash` — off by default. The agent always has `Read`, `Write`,
+  `Edit`, `Glob` and `Grep`. Adding `Bash` makes it far more capable, but note
+  that the workspace confines the agent's *working directory*, not what a shell
+  command can reach.
+- `claude.systemPromptExtra` — appended to the built-in prompt. Put your printer,
+  materials and tolerances here.
+
+Restart the add-in (Stop → Run) after editing.
+
 ## Development
 
 After editing anything under `addin/`, run `./scripts/install.sh` to push the
@@ -60,6 +99,9 @@ changes, then **Add-Ins → Stop → Run** in Fusion.
 palette — with only Fusion's UI objects stubbed. It fails if the reply stops
 arriving incrementally, which is the regression that matters: a pump that drains
 on the producer's thread would still "work" in a naive test and deadlock Fusion.
+
+`FDM_AGENT_BACKEND` overrides which backend the sidecar starts on, which is how
+the test pins itself to the stub instead of making billable model calls.
 
 To poke at the sidecar by hand:
 
@@ -98,7 +140,7 @@ addin/FusionFDMAgent/   the add-in (stdlib only)
   lib/sidecar.py        subprocess supervision
   resources/palette/    the chat UI
 sidecar/fdm_sidecar/    the agent process
-  backends/             echo (working), claude + codex (stubs)
+  backends/             claude (working), echo (stub), codex (detection only)
 tests/                  round-trip test + stubbed `adsk`
 scripts/                bootstrap, install, uninstall, doctor, test,
                         fix-duplicate-registration

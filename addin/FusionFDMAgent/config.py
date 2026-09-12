@@ -52,7 +52,13 @@ SIDECAR_LOG_FILE = os.path.join(LOG_DIR, "sidecar.log")
 SETTINGS_FILE = os.path.join(HOME_DIR, "settings.json")
 
 DEFAULT_SETTINGS = {
-    "backend": "echo",
+    "backend": "claude",
+    # Read by the sidecar, not by the add-in. See fdm_sidecar/settings.py.
+    "claude": {
+        "model": None,
+        "allowBash": False,
+        "systemPromptExtra": "",
+    },
 }
 
 

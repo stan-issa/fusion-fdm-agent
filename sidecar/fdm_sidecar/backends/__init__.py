@@ -9,7 +9,9 @@ from .claude_code import ClaudeCodeBackend
 from .codex import CodexBackend
 from .echo import EchoBackend
 
-BACKEND_CLASSES = (EchoBackend, ClaudeCodeBackend, CodexBackend)
+# Ordered by preference: the sidecar defaults to the first available one,
+# so the stub is last.
+BACKEND_CLASSES = (ClaudeCodeBackend, CodexBackend, EchoBackend)
 
 __all__ = [
     "Availability",
