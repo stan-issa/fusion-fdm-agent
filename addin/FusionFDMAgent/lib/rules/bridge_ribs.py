@@ -11,14 +11,27 @@ separate bodies, deliberately, because they are meant to be snapped off and
 thrown away -- and because a support that had been merged into the part would
 be nothing but a defect.
 
-Two details make them removable rather than permanent. Each stops a hair
-short of the bridge, so the part rests on it without fusing to it, and each
-runs out past the side of the part to give a grip to pull on. A support that
-cannot be gripped is a support that gets dug out with pliers.
+The profile is shaped so that stability and removability can be tuned
+separately, which a plain wall does not allow. From the bed up: a wide thin
+flange for bed adhesion, a body thick enough not to flex, a short taper, and
+a narrow ridge under the bridge. Widening the body to resist tipping then
+costs nothing at the top, where the only thing that matters is how little
+surface can weld itself to the part.
+
+Separate bodies in Fusion do *not* keep two surfaces apart in the printer, so
+release is a gap rather than a hope: a vertical clearance under the ridge, and
+a side clearance anywhere the rib would otherwise touch a wall. A larger top
+gap releases more easily and leaves a worse underside; the defaults below are
+a starting experiment for PLA on a 0.4 mm nozzle at 0.2 mm layers, not a
+promise. Calibrate them and keep the result -- the settings file is the
+preset.
 
 Scope, for now: bridges with open space all the way down to the plate and a
-clear path out sideways. Anything else is reported and left alone.
+clear path out sideways, checked for the whole rib rather than just its top.
+Anything else is reported and left alone.
 """
+
+import math
 
 import adsk.fusion
 
@@ -35,20 +48,48 @@ NEEDS_BUILD_DIRECTION = True
 
 PARAMS = {
     "max_span_mm": {
-        "default": 20.0, "min": 2.0, "max": 200.0,
+        "default": 15.0, "min": 2.0, "max": 200.0,
         "label": "Max span", "unit": "mm",
     },
     "thickness_mm": {
-        "default": 0.8, "min": 0.2, "max": 5.0,
-        "label": "Rib thickness", "unit": "mm",
+        "default": 1.8, "min": 0.4, "max": 10.0,
+        "label": "Body thickness", "unit": "mm",
+    },
+    "ridge_mm": {
+        "default": 0.9, "min": 0.2, "max": 10.0,
+        "label": "Top ridge width", "unit": "mm",
+    },
+    "taper_deg": {
+        "default": 45.0, "min": 15.0, "max": 80.0,
+        "label": "Taper from vertical", "unit": "°",
     },
     "top_gap_mm": {
-        "default": 0.15, "min": 0.0, "max": 1.0,
+        "default": 0.2, "min": 0.0, "max": 1.0,
         "label": "Top gap", "unit": "mm",
+    },
+    "side_clearance_mm": {
+        "default": 0.5, "min": 0.0, "max": 5.0,
+        "label": "Side clearance", "unit": "mm",
+    },
+    "flange_mm": {
+        "default": 4.0, "min": 0.0, "max": 30.0,
+        "label": "Base flange", "unit": "mm",
+    },
+    "flange_thickness_mm": {
+        "default": 0.6, "min": 0.0, "max": 5.0,
+        "label": "Flange thickness", "unit": "mm",
     },
     "tab_mm": {
         "default": 5.0, "min": 0.0, "max": 30.0,
         "label": "Grip tab", "unit": "mm",
+    },
+    "buttress_above_mm": {
+        "default": 15.0, "min": 1.0, "max": 300.0,
+        "label": "Buttress above", "unit": "mm",
+    },
+    "layer_height_mm": {
+        "default": 0.2, "min": 0.02, "max": 1.0,
+        "label": "Layer height", "unit": "mm",
     },
     "max_tilt_deg": {
         "default": 5.0, "min": 0.1, "max": 30.0,
@@ -56,10 +97,19 @@ PARAMS = {
     },
 }
 
-# Where to probe for material in the way, as fractions across the rib and up
-# its height. Clear of the ends, so a probe does not land on a boundary.
-_ACROSS = (0.15, 0.5, 0.85)
-_UP = (0.1, 0.5, 0.9)
+# How far a buttress reaches either side of the rib, and how much of the rib's
+# height it braces. Kept below the taper, so it never touches the part.
+_BUTTRESS_REACH_MM = 4.0
+_BUTTRESS_FRACTION = 0.6
+
+# Fractions of an extension to try when something is in the way, largest
+# first. A blocked flange is trimmed back rather than abandoned.
+_TRIM_STEPS = (1.0, 0.5, 0.25)
+
+# Where to probe each block for material in the way, as fractions along it
+# and up it. Clear of the ends, so a probe does not land on a boundary.
+_ALONG = (0.1, 0.5, 0.9)
+_UP = (0.15, 0.85)
 
 # How far past the side of the part a grip tab has to be clear to be grippable.
 _TAB_CLEARANCE = 0.5
@@ -131,16 +181,17 @@ def _examine(context, body, face, params, direction, bottom, existing):
         ),
         body=body.name,
         fixable=True,
-        fix_summary="Add {} removable support{}".format(
-            len(plan), "" if len(plan) == 1 else "s"
+        fix_summary="Add {} removable support{} ({} mm ridge, {} mm gap)".format(
+            len(plan), "" if len(plan) == 1 else "s",
+            _format(params["ridge_mm"]), _format(params["top_gap_mm"]),
         ),
         entities=[face],
         extra={"spanMm": geo.round_mm(span), "ribs": len(plan)},
     )
 
 
-class _Rib:
-    """One wall, as a box waiting to be built. Centimetres throughout."""
+class _Box:
+    """One block of a rib, positioned outright. Centimetres throughout."""
 
     def __init__(self, centre, length_direction, width_direction,
                  length, width, height):
@@ -156,6 +207,153 @@ class _Rib:
             self.centre, self.length_direction, self.width_direction,
             self.length, self.width, self.height,
         )
+
+    def samples(self, up):
+        """Points spread through the block, for asking what is already there."""
+        height_direction = geo.cross(self.length_direction, self.width_direction)
+        if geo.dot(height_direction, up) < 0.0:
+            height_direction = geo.negate(height_direction)
+        for along in _ALONG:
+            for upward in _UP:
+                yield geo.add(
+                    self.centre,
+                    geo.add(
+                        geo.scale(
+                            self.length_direction,
+                            self.length * (along - 0.5),
+                        ),
+                        geo.scale(height_direction, self.height * (upward - 0.5)),
+                    ),
+                )
+
+
+class _Rib:
+    """One support, as the blocks it is made of.
+
+    Built as several boxes and merged, rather than drawn as a profile and
+    swept, because a box placed by its centre and two axes needs no sketch
+    plane. The taper is stepped at the layer height, which is not an
+    approximation of a sloped face so much as a description of what the
+    slicer would make of one.
+    """
+
+    def __init__(self, centre):
+        self.centre = centre
+        self.boxes = []
+
+    def add(self, box):
+        self.boxes.append(box)
+
+    def build(self):
+        solid = None
+        for box in self.boxes:
+            piece = box.build()
+            if piece is None:
+                return None
+            if solid is None:
+                solid = piece
+            elif not fg.union(solid, piece):
+                return None
+        return solid
+
+    def is_clear(self, body, up):
+        """Whether every part of the rib has empty space to occupy.
+
+        The whole rib, not just its top: a flange that runs into the part, or
+        a grip tab buried in it, is as much of a failure as a ridge that does.
+        """
+        for box in self.boxes:
+            for point in box.samples(up):
+                if not fg.is_outside(body, point):
+                    return False
+        return True
+
+
+def _shape(params, direction, span_normal, across, along, bottom, height,
+           reach_low, reach_high, flange_low, flange_high,
+           flange_near, flange_far, buttress_reach):
+    """Lay out the blocks of one rib.
+
+    Bottom to top: a wide thin flange for bed adhesion, a body thick enough
+    not to flex, a stepped taper, and a narrow ridge. Widening the body to
+    resist tipping costs nothing at the ridge, which is the only part that can
+    weld itself to the model.
+    """
+    thickness = geo.to_cm(params["thickness_mm"])
+    ridge = min(geo.to_cm(params["ridge_mm"]), thickness)
+    flange_height = geo.to_cm(params["flange_thickness_mm"])
+    layer = geo.to_cm(params["layer_height_mm"])
+
+    inset = (thickness - ridge) / 2.0
+    rise = inset / math.tan(math.radians(params["taper_deg"])) if inset > 0 else 0.0
+    body_top = bottom + height - rise
+    if body_top <= bottom + flange_height:
+        return None, (
+            "The gap under this bridge is too shallow for a support with a "
+            "base and a tapered tip."
+        )
+
+    def place(low_across, high_across, low_span, high_span, low_up, high_up):
+        centre = _point(
+            direction, span_normal, across,
+            (low_up + high_up) / 2.0,
+            (low_span + high_span) / 2.0 + along,
+            (low_across + high_across) / 2.0,
+        )
+        return _Box(
+            centre, across, span_normal,
+            high_across - low_across, high_span - low_span, high_up - low_up,
+        )
+
+    rib = _Rib(_point(
+        direction, span_normal, across,
+        bottom + height / 2.0, along, (reach_low + reach_high) / 2.0,
+    ))
+
+    if flange_height > 0.0 and (flange_near or flange_far or flange_low or flange_high):
+        rib.add(place(
+            reach_low - flange_low, reach_high + flange_high,
+            -thickness / 2.0 - flange_near, thickness / 2.0 + flange_far,
+            bottom, bottom + flange_height,
+        ))
+
+    rib.add(place(
+        reach_low, reach_high,
+        -thickness / 2.0, thickness / 2.0,
+        bottom + flange_height, body_top,
+    ))
+
+    # A taper at 45 degrees steps in by one layer for every layer it rises,
+    # so stepping it at the layer height is what the printer does anyway.
+    # Splitting the rise evenly keeps the angle exact and lands the top on the
+    # ridge width rather than near it.
+    if rise > 0.0:
+        steps = max(1, int(math.ceil(rise / layer)))
+        for step in range(steps):
+            half = thickness / 2.0 - inset * (step + 1) / steps
+            rib.add(place(
+                reach_low, reach_high, -half, half,
+                body_top + rise * step / steps,
+                body_top + rise * (step + 1) / steps,
+            ))
+
+    if buttress_reach > 0.0:
+        # Braces the wall across its thin direction. Kept below the taper so
+        # it can never reach the part, and it travels with the rib when the
+        # rib is pulled out.
+        top = min(body_top, bottom + height * _BUTTRESS_FRACTION)
+        if top > bottom + flange_height:
+            centre = _point(
+                direction, span_normal, across,
+                (bottom + flange_height + top) / 2.0, along,
+                (reach_low + reach_high) / 2.0,
+            )
+            rib.add(_Box(
+                centre, span_normal, across,
+                buttress_reach * 2.0, thickness, top - bottom - flange_height,
+            ))
+
+    return rib, ""
 
 
 def _plan(body, face, params, direction, bottom, near, span, fractions):
@@ -174,39 +372,95 @@ def _plan(body, face, params, direction, bottom, near, span, fractions):
         return None, "There is no room between the bridge and the build plate."
 
     start = fg.plane_offset(near.wall, near.normal)
-    middle_along = start + geo.to_cm(span) / 2.0
     middle_up = (bridge_station + bottom) / 2.0
-
+    clearance = geo.to_cm(params["side_clearance_mm"])
     tab = geo.to_cm(params["tab_mm"])
-    reach_low, reach_high = _grip_reach(
-        body, params, direction, near.normal, across,
-        low, high, tab, middle_along, middle_up,
+    flange = geo.to_cm(params["flange_mm"])
+    buttress = (
+        geo.to_cm(_BUTTRESS_REACH_MM)
+        if geo.to_mm(height) >= params["buttress_above_mm"] else 0.0
     )
-    if tab > 0.0 and reach_low == low and reach_high == high:
-        return None, (
-            "Nowhere to put a grip tab: the sides of the bridge are enclosed, "
-            "so a support could not be pulled out."
-        )
-
-    thickness = geo.to_cm(params["thickness_mm"])
-    length = reach_high - reach_low
-    centre_across = (reach_low + reach_high) / 2.0
-    centre_up = bottom + height / 2.0
 
     plan = []
     for fraction in fractions:
-        station = start + geo.to_cm(span) * fraction
-        centre = _point(direction, near.normal, across, centre_up, station, centre_across)
-        rib = _Rib(centre, across, near.normal, length, thickness, height)
-        if not _space_is_clear(body, rib, direction, across):
+        along = start + geo.to_cm(span) * fraction
+        anchor = _point(direction, near.normal, across, middle_up, along, 0.0)
+
+        # Each end either reaches out into open air for a grip tab, or pulls
+        # back from a wall it would otherwise weld itself to. Separate
+        # clearances, because they answer separate questions.
+        reach_low, reach_high = _ends(
+            body, anchor, across, low, high, tab, clearance
+        )
+        if tab > 0.0 and reach_low >= low and reach_high <= high:
+            return None, (
+                "Nowhere to put a grip tab: the sides of this bridge are "
+                "enclosed, so a support could not be pulled out."
+            )
+
+        rib, reason = _shape(
+            params, direction, near.normal, across, along, bottom, height,
+            reach_low, reach_high,
+            _reach(body, anchor, across, -1.0, flange, reach_low),
+            _reach(body, anchor, across, 1.0, flange, reach_high),
+            _reach(body, anchor, near.normal, -1.0, flange,
+                   -geo.to_cm(params["thickness_mm"]) / 2.0),
+            _reach(body, anchor, near.normal, 1.0, flange,
+                   geo.to_cm(params["thickness_mm"]) / 2.0),
+            _reach(body, anchor, near.normal, 1.0, buttress,
+                   geo.to_cm(params["thickness_mm"]) / 2.0) if buttress else 0.0,
+        )
+        if rib is None:
+            return None, reason
+        if not rib.is_clear(body, direction):
             return None, (
                 "Something stands in the way beneath this bridge, so a support "
                 "could not reach the build plate."
             )
         plan.append(rib)
+
     if not plan:
         return None, "Nothing to divide."
     return plan, ""
+
+
+def _ends(body, anchor, across, low, high, tab, clearance):
+    """Where the rib's two ends land: out into air, or back from a wall.
+
+    A tab needs open space to reach into; an end that has no open space next
+    to it is against something, and has to stand off it instead or the two
+    will weld together in the print.
+    """
+    reach_low, reach_high = low, high
+    for sign in (-1.0, 1.0):
+        edge = high if sign > 0 else low
+        if tab > 0.0 and _reach(body, anchor, across, sign, tab, edge) >= tab:
+            reach = edge + sign * tab
+        else:
+            reach = edge - sign * clearance
+        if sign > 0:
+            reach_high = reach
+        else:
+            reach_low = reach
+    return reach_low, reach_high
+
+
+def _reach(body, anchor, axis, sign, wanted, from_station):
+    """The largest extension along an axis that stays out of the part.
+
+    Trimmed rather than abandoned: a flange that cannot have its full four
+    millimetres on one side is still worth having on the other three, and half
+    a flange still resists tipping.
+    """
+    if wanted <= 0.0:
+        return 0.0
+    base = geo.subtract(anchor, geo.scale(axis, geo.dot(anchor, axis)))
+    for fraction in _TRIM_STEPS:
+        station = from_station + sign * wanted * fraction
+        probe = geo.add(base, geo.scale(axis, station))
+        if fg.is_outside(body, probe):
+            return wanted * fraction
+    return 0.0
 
 
 def _point(direction, span_normal, across, up, along, sideways):
@@ -222,49 +476,6 @@ def _across_direction(direction, span_normal):
         return geo.normalise(geo.cross(direction, span_normal))
     except ValueError:
         return None
-
-
-def _grip_reach(body, params, direction, span_normal, across,
-                low, high, tab, middle_along, middle_up):
-    """How far the rib may run past each side of the bridge.
-
-    A tab is only useful where there is open air beyond the side of the part
-    to reach into, so each end is probed before it is extended. Reaching into
-    solid material would not be a grip; it would be a collision.
-    """
-    if tab <= 0.0:
-        return low, high
-    reach_low, reach_high = low, high
-    for sign in (-1.0, 1.0):
-        station = (high if sign > 0 else low) + sign * tab * (1.0 + _TAB_CLEARANCE)
-        probe = _point(
-            direction, span_normal, across, middle_up, middle_along, station
-        )
-        if fg.is_outside(body, probe):
-            if sign > 0:
-                reach_high = high + tab
-            else:
-                reach_low = low - tab
-    return reach_low, reach_high
-
-
-def _space_is_clear(body, rib, direction, across):
-    """Whether the rib's column is empty all the way down to the plate."""
-    half_length = rib.length / 2.0
-    for sideways in _ACROSS:
-        along = -half_length + rib.length * sideways
-        for upward in _UP:
-            lift = -rib.height / 2.0 + rib.height * upward
-            probe = geo.add(
-                rib.centre,
-                geo.add(
-                    geo.scale(across, along),
-                    geo.scale(direction, lift),
-                ),
-            )
-            if not fg.is_outside(body, probe):
-                return False
-    return True
 
 
 def _existing_supports(body):
@@ -365,10 +576,12 @@ def _build(context, finding, face, params):
 
     return Outcome.applied(
         finding.id,
-        "Added {} support{} ({} mm thick, {} mm gap) as separate bodies: {}.".format(
+        "Added {} support{} as separate bodies: {}. {} mm body tapering to a "
+        "{} mm ridge, {} mm under the bridge.".format(
             len(bodies), "" if len(bodies) == 1 else "s",
-            _format(params["thickness_mm"]), _format(params["top_gap_mm"]),
             ", ".join(item.name for item in bodies),
+            _format(params["thickness_mm"]), _format(params["ridge_mm"]),
+            _format(params["top_gap_mm"]),
         ),
         feature=feature,
     )

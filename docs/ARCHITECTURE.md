@@ -334,13 +334,30 @@ anything so marked. Otherwise the next check would find a support's flat
 bottom and offer to chamfer the footprint of something the user is about to
 throw away.
 
-Removability is two details. A calibrated **top gap** means the part rests on
-the support without fusing to it, and a **grip tab** running out past the side
-of the part gives something to pull. Both are probed before they are promised:
-a tab is only extended where the space beside the part is actually open, and a
-rib is only planned where the column down to the plate is clear. A support
-that cannot be gripped, or that runs into the part on its way down, is not a
-support.
+The profile is what lets stability and removal be tuned apart from each other,
+which a plain wall does not allow. From the bed up: a wide thin flange, a body
+thick enough not to flex, a short taper, a narrow ridge. Widening the body to
+resist tipping then costs nothing at the top, where the only thing that
+matters is how little surface can weld itself to the part.
+
+The taper is **stepped at the layer height**, which is less of an
+approximation than it sounds: a 45 degree face steps in by one layer for every
+layer it rises, so that is what the slicer would make of a sloped face anyway.
+The rise is split evenly rather than by whole layers, which keeps the angle
+exact and lands the top *on* the ridge width instead of near it — and near
+enough is not good enough for the one dimension that governs adhesion.
+
+**Separate bodies in Fusion do not keep two surfaces apart in the printer.**
+Release is therefore a gap: a vertical clearance under the ridge, and a side
+clearance anywhere the rib would otherwise meet a wall. Those answer different
+questions and are separate settings.
+
+Everything is probed before it is promised, and for the whole rib rather than
+its top: a flange that runs into the part, or a grip tab buried in it, is as
+much of a failure as a ridge that does. What is in the way gets trimmed rather
+than abandoned — a flange that cannot have its full reach on one side is still
+worth having on the other three. What cannot be trimmed is reported, and the
+bridge is left alone.
 
 ### One face, two rules
 

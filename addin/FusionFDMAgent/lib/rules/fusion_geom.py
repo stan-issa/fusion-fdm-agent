@@ -832,3 +832,13 @@ def next_support_number(component):
         except (ValueError, IndexError):
             continue
     return highest + 1
+
+
+def union(target, tool):
+    """Merge one temporary body into another. Modifies ``target`` in place."""
+    try:
+        return adsk.fusion.TemporaryBRepManager.get().booleanOperation(
+            target, tool, adsk.fusion.BooleanTypes.UnionBooleanType
+        )
+    except Exception:
+        return False

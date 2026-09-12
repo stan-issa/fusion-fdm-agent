@@ -20,7 +20,7 @@ guess:
 | **Add lead-ins to holes** | Plain cylindrical bores with a bare mouth | A 0.5 mm entrance chamfer; the bore diameter below it is untouched |
 | **Teardrop horizontal bores** | Bores running across the build direction (within 30° of horizontal), at any diameter, whose flat roof cannot print | A 45° teardrop roof, tangent to the bore, so the original circular clearance is preserved |
 | **Slope ledge undersides** | Straight ledges projecting from a wall, whose flat underside is a 90° overhang | A 45° triangular gusset filling the corner beneath it. The top of the ledge is untouched |
-| **Rib long bridges** | Flat bridges held at both ends whose span exceeds what the printer bridges cleanly (20 mm by default) | Thin walls standing on the build plate, dividing the span. Separate named bodies, with a top gap and a grip tab so they snap off |
+| **Rib long bridges** | Flat bridges held at both ends whose span exceeds what the printer bridges cleanly (15 mm by default) | Ribs standing on the build plate, dividing the span. Separate named bodies, shaped so they come off |
 
 Tick the rules you want at the top of the panel, press **Check model**, then
 tick the findings to fix and press **Apply**. That click is the approval — you
@@ -40,9 +40,49 @@ Some exclusions cannot be read off the geometry: a bearing seat and a clearance
 hole are the same cylinder. **Ignore** marks one on the model itself, so it
 travels with the document.
 
+### Support ribs
+
 Supports arrive as separate bodies named `FDM support 1`, `2`… and marked as
 scaffolding, so the other rules step over them rather than offering to chamfer
 something you are about to snap off.
+
+Their profile lets stability and removal be tuned apart from each other. From
+the bed up: a wide thin flange for adhesion, a body thick enough not to flex,
+a short taper, and a narrow ridge under the bridge. Widening the body to
+resist tipping then costs nothing at the top, where the only thing that
+matters is how little surface can weld itself to the part. Tall ribs get a
+brace across them, kept below the taper.
+
+**Separate bodies in Fusion do not keep two surfaces apart in the printer.**
+Release is a gap, not a hope — a vertical clearance under the ridge, and a
+side clearance anywhere the rib would otherwise touch a wall.
+
+The defaults are a starting experiment for PLA, a 0.4 mm nozzle, 0.45 mm
+extrusion width and 0.2 mm layers, not a promise:
+
+| | | |
+|---|---:|---|
+| Max span | 15 mm | pending calibration |
+| Body thickness | 1.8 mm | ~four extrusion widths |
+| Top ridge width | 0.9 mm | less area to adhere |
+| Taper from vertical | 45° | no knife edge to vanish in slicing |
+| Top gap | 0.2 mm | check the empty layer in your slicer |
+| Side clearance | 0.5 mm | separate from the top gap |
+| Base flange | 4 mm / 0.6 mm | bed contact, trimmed near the model |
+| Grip tab | 5 mm | somewhere to pull |
+
+Calibrate before trusting them: print a bridge coupon with **0.9 and 1.35 mm
+ridges** at **0.2 and 0.4 mm top gaps**, take the pair that releases cleanly
+with acceptable sag, and retest at the rib height you actually need. A larger
+gap releases more easily and leaves a worse underside — see
+[Prusa's support guidance](https://help.prusa3d.com/article/support-material_1698)
+and [INTAMSYS's gap comparisons](https://help.intamsys.com/en/APPLICATION/Support_and_Overhang).
+Each rule's settings are stored per rule in `settings.json`, so the result is
+your printer/material preset.
+
+Then check the slice, not just the model: continuous rib toolpaths, the top
+gap actually empty, and bridge lines crossing the ridges. A slicer treats a
+modelled support as an ordinary part.
 
 The rules are Python modules in `addin/FusionFDMAgent/lib/rules/`; adding one
 means writing `detect` and `apply` and nothing else.

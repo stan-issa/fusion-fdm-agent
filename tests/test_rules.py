@@ -33,7 +33,8 @@ from FusionFDMAgent.lib.rules import geometry as geo            # noqa: E402
 from FusionFDMAgent.lib.rules import signature as sig           # noqa: E402
 from FusionFDMAgent.lib.rules import RULES, BY_ID               # noqa: E402
 from FusionFDMAgent.lib.rules import (                          # noqa: E402
-    chamfer_op, fusion_geom as fg, ledge_gusset, teardrop_bore, underside,
+    bridge_ribs, chamfer_op, fusion_geom as fg, ledge_gusset, teardrop_bore,
+    underside,
 )
 from FusionFDMAgent.lib.rules.session import _same_document     # noqa: E402
 from FusionFDMAgent.lib.rules.base import (                     # noqa: E402
@@ -584,6 +585,118 @@ def test_rib_positions():
           and underside.rib_positions(60.0, 0.0) == [])
 
 
+# -- the shape of a rib ----------------------------------------------------
+
+
+def _shaped(height_cm=2.0, **overrides):
+    """Lay out one rib against the default profile. Centimetres."""
+    params = merge_params(bridge_ribs.PARAMS, overrides)
+    rib, why = bridge_ribs._shape(
+        params,
+        (0.0, 0.0, 1.0),        # build direction
+        (1.0, 0.0, 0.0),        # across the span
+        (0.0, 1.0, 0.0),        # along the bridge
+        0.0,                    # position along the span
+        0.0,                    # bed
+        height_cm,
+        -1.0, 1.0,              # the rib's two ends
+        0.4, 0.4, 0.4, 0.4,     # flange, all four sides
+        overrides.get("_buttress", 0.0),
+    )
+    return rib, why, params
+
+
+def test_rib_profile():
+    print("the shape of a rib")
+
+    rib, why, params = _shaped()
+    check("a rib is laid out", rib is not None, why)
+    if rib is None:
+        return
+
+    boxes = rib.boxes
+    flange, body, taper = boxes[0], boxes[1], boxes[2:]
+
+    # Sturdy at the bottom, narrow at the top: the point of the profile is
+    # that resisting tipping and releasing cleanly stop fighting each other.
+    check("the flange is wider than the body", flange.width > body.width)
+    check("the flange is as thick as asked",
+          close(geo.to_mm(flange.height), params["flange_thickness_mm"], 1e-9),
+          geo.to_mm(flange.height))
+    check("the body is as thick as asked",
+          close(geo.to_mm(body.width), params["thickness_mm"], 1e-9),
+          geo.to_mm(body.width))
+    check("the flange reaches out all round",
+          close(geo.to_mm(flange.width),
+                params["thickness_mm"] + 2 * 4.0, 1e-9),
+          geo.to_mm(flange.width))
+
+    # The taper lands *on* the ridge width, not near it. A step scheme that
+    # merely approaches it would leave the one dimension that governs how
+    # much can weld itself to the part up to rounding.
+    check("the taper ends exactly at the ridge width",
+          close(geo.to_mm(taper[-1].width), params["ridge_mm"], 1e-9),
+          geo.to_mm(taper[-1].width))
+    check("every taper step is within one layer",
+          all(geo.to_mm(step.height) <= params["layer_height_mm"] + 1e-9
+              for step in taper),
+          [geo.to_mm(step.height) for step in taper])
+
+    # 45 degrees from vertical means it steps in by exactly what it rises --
+    # which is what the slicer does with a sloped face anyway.
+    first = taper[0]
+    check("the taper is at the angle asked",
+          close((body.width - first.width) / 2.0, first.height, 1e-9),
+          ((body.width - first.width) / 2.0, first.height))
+
+    # The ridge stops short of the bridge; the height it is given already has
+    # the gap taken out of it, since separate bodies in Fusion do not keep two
+    # surfaces apart in the printer.
+    top = max(box.centre[2] + box.height / 2.0 for box in boxes)
+    check("the rib stops where its height says", close(top, 2.0, 1e-9), top)
+    check("the blocks stack without a gap",
+          close(flange.centre[2] + flange.height / 2.0,
+                body.centre[2] - body.height / 2.0, 1e-9))
+
+    # A knife edge would vanish in slicing, so the ridge never goes to zero.
+    wide, _why, _params = _shaped(ridge_mm=0.2)
+    check("a narrow ridge is still a ridge",
+          min(box.width for box in wide.boxes) > 0.0)
+
+    # Told the ridge is as wide as the body, there is nothing to taper.
+    flat, _why, _params = _shaped(ridge_mm=1.8)
+    check("no taper when the ridge is the body width", len(flat.boxes) == 2)
+
+    # A bridge too close to the bed cannot take a base and a tip.
+    cramped, reason, _params = _shaped(height_cm=0.05)
+    check("a shallow gap is refused with a reason",
+          cramped is None and "shallow" in reason, reason)
+
+
+def test_rib_buttress():
+    print("bracing a tall rib")
+
+    # A wide base resists tipping; a tall thin wall still flexes. The brace
+    # must stay below the taper, or it would reach the part it is holding up.
+    rib, _why, params = _shaped(height_cm=4.0, _buttress=0.4)
+    braced = [box for box in rib.boxes if box.length_direction == (1.0, 0.0, 0.0)]
+    check("a tall rib gets a brace across it", len(braced) == 1)
+    if braced:
+        top = braced[0].centre[2] + braced[0].height / 2.0
+        taper_bottom = min(
+            box.centre[2] - box.height / 2.0
+            for box in rib.boxes if close(geo.to_mm(box.width),
+                                          params["ridge_mm"], 1e-9)
+        )
+        check("the brace stays below the tapered tip", top <= taper_bottom + 1e-9,
+              (top, taper_bottom))
+
+    plain, _why, _params = _shaped(height_cm=4.0)
+    check("no brace unless one is called for",
+          not [box for box in plain.boxes
+               if box.length_direction == (1.0, 0.0, 0.0)])
+
+
 # -- where the teardrop cut runs -------------------------------------------
 #
 # Enough fake topology to walk, and no more: faces that know their surface
@@ -943,7 +1056,8 @@ def test_parity():
 for test in (test_teardrop, test_vectors, test_units, test_distances,
              test_signatures, test_params, test_findings, test_catalogue,
              test_reveal, test_convexity, test_ledge_gusset,
-             test_bridge_vs_ledge, test_rib_positions, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
+             test_bridge_vs_ledge, test_rib_positions, test_rib_profile,
+             test_rib_buttress, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
              test_document_identity, test_parity):
     test()
 
