@@ -1,0 +1,13 @@
+{
+    "autodeskProduct": "Fusion",
+    "type": "addin",
+    "id": "39eb70f6-41f0-4b9d-915a-bdf2ec60d0c3",
+    "author": "Stanislav Issayenko",
+    "description": {
+        "": "Chat panel in Fusion backed by an external coding agent (Claude Code / Codex)."
+    },
+    "version": "0.1.0",
+    "runOnStartup": true,
+    "supportedOS": "mac",
+    "editEnabled": true
+}
