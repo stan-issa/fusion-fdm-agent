@@ -33,8 +33,8 @@ from FusionFDMAgent.lib.rules import geometry as geo            # noqa: E402
 from FusionFDMAgent.lib.rules import signature as sig           # noqa: E402
 from FusionFDMAgent.lib.rules import RULES, BY_ID               # noqa: E402
 from FusionFDMAgent.lib.rules import (                          # noqa: E402
-    bridge_ribs, chamfer_op, fusion_geom as fg, ledge_gusset, teardrop_bore,
-    underside,
+    bridge_ribs, chamfer_op, fusion_geom as fg, ledge_gusset, peg_lead_in,
+    teardrop_bore, underside,
 )
 from FusionFDMAgent.lib.rules.session import _same_document     # noqa: E402
 from FusionFDMAgent.lib.rules.base import (                     # noqa: E402
@@ -697,6 +697,83 @@ def test_rib_buttress():
                if box.length_direction == (1.0, 0.0, 0.0)])
 
 
+# -- a peg's tip is not its root -------------------------------------------
+
+
+def _peg(tip_on_bed=False, chamfered=False):
+    """A cylindrical peg standing on a base, as faces and circular edges.
+
+    The root and the tip look alike -- a circle where the cylinder meets a
+    flat face -- so the fake has to carry enough for the convexity test to
+    tell them apart, which is the whole point of the rule's end selection.
+    """
+    planes = adsk.core.SurfaceTypes.PlaneSurfaceType
+    cylinders = adsk.core.SurfaceTypes.CylinderSurfaceType
+    cones = adsk.core.SurfaceTypes.ConeSurfaceType
+
+    # The cylinder's own sample point is halfway up its side, which is what
+    # gives the walk off each edge somewhere to go.
+    peg = _FakeFace("peg", cylinders, (1.0, 0.0, 0.0), (0.25, 0.0, 0.5))
+
+    base_z = 0.0 if not tip_on_bed else 1.0
+    tip_z = 1.0 if not tip_on_bed else 0.0
+    base = _FakeFace("base", planes, (0.0, 0.0, 1.0 if not tip_on_bed else -1.0),
+                     (0.0, 0.0, base_z))
+    tip = _FakeFace(
+        "tip", cones if chamfered else planes,
+        (0.0, 0.0, 1.0 if not tip_on_bed else -1.0), (0.0, 0.0, tip_z),
+    )
+    _circular_edge(0.25, base_z, peg, base)
+    _circular_edge(0.25, tip_z, peg, tip)
+    return peg
+
+
+def _circular_edge(radius, z, first, second):
+    edge = _FusionObject(
+        entityToken="ring-{}".format(z),
+        geometry=_FusionObject(
+            curveType=adsk.core.Curve3DTypes.Circle3DCurveType,
+            radius=radius,
+            center=adsk.core.Point3D.create(0.0, 0.0, z),
+            normal=adsk.core.Vector3D.create(0.0, 0.0, 1.0),
+        ),
+        faces=_Collection([first, second]),
+        body=_FakeBody(),
+        pointOnEdge=adsk.core.Point3D.create(radius, 0.0, z),
+    )
+    first.edges.append(edge)
+    second.edges.append(edge)
+    return edge
+
+
+def test_peg_ends():
+    print("telling a peg's tip from its root")
+
+    up = (0.0, 0.0, 1.0)
+
+    # A chamfer on the root would undercut the peg where it meets its base
+    # instead of leading anything into anything. The two edges are the same
+    # shape and differ only in which way the solid folds at them.
+    ends, note = peg_lead_in._free_ends(_peg(), up, -5.0)
+    check("only the free end is chamfered", len(ends) == 1, (len(ends), note))
+    if ends:
+        check("and it is the one away from the base",
+              close(fg.circle_centre(ends[0])[2], 1.0, 1e-9))
+
+    # An end opening into a cone already has its lead-in.
+    ends, note = peg_lead_in._free_ends(_peg(chamfered=True), up, -5.0)
+    check("an already chamfered peg is left alone",
+          ends == [] and "Already" in note, note)
+
+    # A peg printed pointing down has its tip on the plate, where the
+    # bed-contact rule already chamfers it -- at the size elephant's foot
+    # wants, not the size assembly wants. Two chamfers on one edge is one
+    # too many.
+    ends, note = peg_lead_in._free_ends(_peg(tip_on_bed=True), up, 0.0)
+    check("a peg standing on its tip is left to the bed rule",
+          ends == [] and "build plate" in note, note)
+
+
 # -- a support has no business being wider than the part -------------------
 
 
@@ -1086,7 +1163,7 @@ for test in (test_teardrop, test_vectors, test_units, test_distances,
              test_signatures, test_params, test_findings, test_catalogue,
              test_reveal, test_convexity, test_ledge_gusset,
              test_bridge_vs_ledge, test_rib_positions, test_rib_profile,
-             test_rib_buttress, test_rib_stays_within_the_part, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
+             test_rib_buttress, test_peg_ends, test_rib_stays_within_the_part, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
              test_document_identity, test_parity):
     test()
 

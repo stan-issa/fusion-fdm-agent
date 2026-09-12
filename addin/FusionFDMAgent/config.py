@@ -65,6 +65,7 @@ DEFAULT_SETTINGS = {
     "rules": {
         "bed_chamfer": {"enabled": True},
         "hole_lead_in": {"enabled": True},
+        "peg_lead_in": {"enabled": True},
         "ledge_gusset": {"enabled": True},
         "bridge_ribs": {"enabled": True},
         "teardrop_bore": {"enabled": True},

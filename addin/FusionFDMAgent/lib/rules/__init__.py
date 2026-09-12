@@ -19,10 +19,14 @@ be the wrong height.
 """
 
 from . import (
-    bed_chamfer, bridge_ribs, hole_lead_in, ledge_gusset, teardrop_bore,
+    bed_chamfer, bridge_ribs, hole_lead_in, ledge_gusset, peg_lead_in,
+    teardrop_bore,
 )
 
-RULES = (teardrop_bore, hole_lead_in, ledge_gusset, bed_chamfer, bridge_ribs)
+RULES = (
+    teardrop_bore, hole_lead_in, peg_lead_in, ledge_gusset, bed_chamfer,
+    bridge_ribs,
+)
 
 BY_ID = {rule.ID: rule for rule in RULES}
 

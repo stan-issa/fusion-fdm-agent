@@ -18,6 +18,7 @@ guess:
 | --- | --- | --- |
 | **Chamfer bed-contact edges** | The outline where the part meets the bed | A chamfer, 0.3 mm by default — skipping edges too close to a neighbour to survive it |
 | **Add lead-ins to holes** | Plain cylindrical bores with a bare mouth | A 0.5 mm entrance chamfer; the bore diameter below it is untouched |
+| **Chamfer mating pegs** | Pegs and pins with a square free end | A 0.5 mm chamfer on the tip — the other half of a lead-in, so an assembly swallows twice the misalignment |
 | **Teardrop horizontal bores** | Bores running across the build direction (within 30° of horizontal), at any diameter, whose flat roof cannot print | A 45° teardrop roof, tangent to the bore, so the original circular clearance is preserved |
 | **Slope ledge undersides** | Straight ledges projecting from a wall, whose flat underside is a 90° overhang | A 45° triangular gusset filling the corner beneath it. The top of the ledge is untouched |
 | **Rib long bridges** | Flat bridges held at both ends whose span exceeds what the printer bridges cleanly (15 mm by default) | Ribs standing on the build plate, dividing the span. Separate named bodies, shaped so they come off |

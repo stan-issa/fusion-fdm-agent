@@ -31,8 +31,13 @@ What each rule should say about the result:
                  different problem with a different answer.
 
   bridge_ribs    The third body is a 60 mm bridge on two legs, open underneath
-                 and open at both sides. Against the default 20 mm limit it
-                 wants two supports, near 20 mm and 40 mm.
+                 and open at both sides. Against the default 15 mm limit it
+                 wants three supports, near 15, 30 and 45 mm.
+
+  peg_lead_in    The 5 mm peg standing on the plate is the mating half of the
+                 5 mm holes. Its tip should be found and its root should not:
+                 they are the same circle on the same cylinder, and differ
+                 only in which way the solid folds at them.
 """
 
 import traceback
@@ -72,6 +77,7 @@ def run(context):
         _ledge(root, plate)
         _vertical_holes(root, plate)
         _horizontal_bore(root, plate, x=45.0)
+        _peg(root, plate)
 
         bridge = _bridge(root)
         del bridge
@@ -85,9 +91,9 @@ def run(context):
         ui.messageBox(
             "Test part built.\n\n"
             "Three bodies on the bed: a plate with a 0.8 mm fin, a projecting "
-            "shelf, two plain 5 mm holes, {}, and a clean 8 mm horizontal "
-            "bore; a block whose 8 mm bore is cross-drilled; and a 60 mm "
-            "bridge on two legs.\n\n"
+            "shelf, two plain 5 mm holes, {}, a 5 mm peg and a clean 8 mm "
+            "horizontal bore; a block whose 8 mm bore is cross-drilled; and a "
+            "60 mm bridge on two legs.\n\n"
             "Open the FDM Agent panel and press Check model.".format(
                 "a threaded 5 mm hole" if threaded
                 else "a 5 mm hole the thread could not be added to"
@@ -234,6 +240,34 @@ def _ledge(root, plate):
     )
     extrude_input.setDistanceExtent(
         False, adsk.core.ValueInput.createByReal(mm(6.0))
+    )
+    extrudes.add(extrude_input)
+
+
+PEG = (5.0, 10.0)   # diameter, height
+
+
+def _peg(root, plate):
+    """A peg on top of the plate, the mating half of the 5 mm holes.
+
+    Its root and its tip are both a circle where a cylinder meets a flat
+    face. Only one of them should be chamfered.
+    """
+    diameter, height = PEG
+    sketch = root.sketches.add(root.xYConstructionPlane)
+    sketch.sketchCurves.sketchCircles.addByCenterRadius(
+        adsk.core.Point3D.create(mm(48.0), mm(30.0), 0), mm(diameter / 2.0)
+    )
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(
+        sketch.profiles.item(0), adsk.fusion.FeatureOperations.JoinFeatureOperation
+    )
+    extrude_input.participantBodies = [plate]
+    extrude_input.startExtent = adsk.fusion.OffsetStartDefinition.create(
+        adsk.core.ValueInput.createByReal(mm(PLATE[2]))
+    )
+    extrude_input.setDistanceExtent(
+        False, adsk.core.ValueInput.createByReal(mm(height))
     )
     extrudes.add(extrude_input)
 
