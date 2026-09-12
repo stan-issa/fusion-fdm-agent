@@ -19,7 +19,7 @@ the next two passes — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```bash
 ./scripts/bootstrap.sh   # sidecar venv + ~/.fusion-fdm-agent
-./scripts/install.sh     # symlink the add-in into Fusion
+./scripts/install.sh     # copy the add-in into Fusion
 ./scripts/doctor.sh      # verify everything above
 ./scripts/test.sh        # round-trip test, no Fusion needed
 ```
@@ -28,7 +28,7 @@ Then in Fusion: **Utilities → Add-Ins** (`Shift+S`) → `FusionFDMAgent` → *
 A *FDM Agent* panel appears on the Design toolbar; its button opens the chat,
 docked to the right.
 
-`./scripts/uninstall.sh` removes the symlink.
+`./scripts/uninstall.sh` removes it again.
 
 ## How it fits together
 
@@ -45,8 +45,16 @@ format.
 
 ## Development
 
-The add-in is installed as a **symlink**, so editing files in this repo is the
-whole loop. To pick up changes: **Add-Ins → Stop → Run**.
+After editing anything under `addin/`, run `./scripts/install.sh` to push the
+changes, then **Add-Ins → Stop → Run** in Fusion.
+
+> **Do not symlink the add-in into Fusion's AddIns folder.** Fusion resolves the
+> symlink and persists the *target* path as a second add-in, so it appears twice
+> in the Add-Ins list and, after a restart, runs twice — two instances fighting
+> over the same panel and palette IDs. `install.sh` therefore copies. If you hit
+> this, quit Fusion and run `./scripts/fix-duplicate-registration.sh`, which
+> drops the stale entry from Fusion's registry (backing the file up first).
+> `./scripts/doctor.sh` checks for both conditions.
 
 `./scripts/test.sh` drives the whole chain — palette → bridge → sidecar → pump →
 palette — with only Fusion's UI objects stubbed. It fails if the reply stops
@@ -92,5 +100,6 @@ addin/FusionFDMAgent/   the add-in (stdlib only)
 sidecar/fdm_sidecar/    the agent process
   backends/             echo (working), claude + codex (stubs)
 tests/                  round-trip test + stubbed `adsk`
-scripts/                bootstrap, install, uninstall, doctor, test
+scripts/                bootstrap, install, uninstall, doctor, test,
+                        fix-duplicate-registration
 ```

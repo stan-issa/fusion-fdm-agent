@@ -88,8 +88,9 @@ any of them works — it forwards a name and renders a list.
 
 ## Where state lives
 
-Nothing mutable lives in the repo, because the add-in directory is a symlink into
-a git working tree. User-level state is under `~/.fusion-fdm-agent/`:
+Nothing mutable lives in the installed add-in directory: `install.sh` rsyncs over
+it with `--delete`, so anything written there is destroyed on the next sync.
+User-level state is under `~/.fusion-fdm-agent/`:
 
 ```
 venv/          sidecar virtualenv
@@ -97,6 +98,19 @@ workspace/     the agent's working directory
 logs/          addin.log, sidecar.log
 settings.json  persisted backend choice
 ```
+
+## Installation is a copy, not a symlink
+
+A symlinked add-in folder looks like the obvious dev loop, and it is a trap.
+Fusion canonicalizes the link and records the *resolved* path in its registry
+(`JSLoadedScriptsinfo`) as a separate add-in, with `runOnStartup` inherited from
+the manifest. The Add-Ins list then shows two rows, and after the next restart
+both run — two instances racing to create the same command definition, toolbar
+panel and palette IDs, each one's `start()` deleting the other's UI.
+
+So `install.sh` copies, `doctor.sh` fails loudly on a symlinked install or a
+duplicate registry entry, and `fix-duplicate-registration.sh` cleans up a
+registry that already has one.
 
 ## Planned passes
 

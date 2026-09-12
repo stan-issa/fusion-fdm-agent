@@ -26,22 +26,74 @@ fi
 echo
 echo "Add-in"
 if [ -L "$ADDIN_LINK" ]; then
-  target="$(readlink "$ADDIN_LINK")"
-  if [ "$target" = "$ADDIN_SRC" ]; then
-    ok "link         $ADDIN_LINK -> $target"
+  # Fusion resolves a symlinked add-in and registers the target as a *second*
+  # add-in, which then runs twice. Never install this way.
+  bad "install      $ADDIN_LINK is a symlink; Fusion will register it twice"
+  echo "               Run ./scripts/install.sh to replace it with a copy, then"
+  echo "               ./scripts/fix-duplicate-registration.sh with Fusion closed."
+  note_fail
+elif [ -d "$ADDIN_LINK" ]; then
+  if [ -f "$ADDIN_LINK/$ADDIN_NAME.manifest" ]; then
+    if diff -rq --exclude=__pycache__ "$ADDIN_SRC" "$ADDIN_LINK" >/dev/null 2>&1; then
+      ok "install      $ADDIN_LINK (up to date)"
+    else
+      warn "install      $ADDIN_LINK differs from the repo. Run ./scripts/install.sh"
+    fi
   else
-    warn "link         points elsewhere: $target"
+    bad "install      $ADDIN_LINK has no manifest"; note_fail
   fi
 elif [ -e "$ADDIN_LINK" ]; then
-  warn "link         $ADDIN_LINK exists but is not a symlink"
+  bad "install      $ADDIN_LINK exists but is not a directory"; note_fail
 else
-  bad "link         not installed. Run ./scripts/install.sh"; note_fail
+  bad "install      not installed. Run ./scripts/install.sh"; note_fail
 fi
 
 if [ -f "$ADDIN_SRC/$ADDIN_NAME.manifest" ]; then
-  ok "manifest     present"
+  ok "manifest     present in repo"
 else
   bad "manifest     missing at $ADDIN_SRC/$ADDIN_NAME.manifest"; note_fail
+fi
+
+# Fusion remembers every add-in path it has ever seen. More than one entry for
+# us means a stale registration that will auto-run a second instance.
+registry_report="$(
+  ADDIN_NAME="$ADDIN_NAME" ADDIN_LINK="$ADDIN_LINK" python3 - <<'PY' 2>/dev/null
+import glob, json, os
+
+name = os.environ["ADDIN_NAME"]
+keep = os.environ["ADDIN_LINK"] + os.sep
+base = os.path.expanduser("~/Library/Application Support/Autodesk/Autodesk Fusion 360")
+stale, total = [], 0
+for path in glob.glob(os.path.join(base, "*", "JSLoadedScriptsinfo")):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            entries = json.load(handle).get("loadedScripts", [])
+    except (OSError, ValueError):
+        continue
+    for entry in entries:
+        if entry.get("name") != name:
+            continue
+        total += 1
+        if not entry.get("path", "").startswith(keep):
+            stale.append(entry["path"])
+print(total)
+for path in stale:
+    print(path)
+PY
+)"
+registry_total="$(printf '%s\n' "$registry_report" | head -n1)"
+registry_stale="$(printf '%s\n' "$registry_report" | tail -n +2 | sed '/^$/d')"
+if [ -z "$registry_total" ]; then
+  warn "registry     could not be read"
+elif [ -n "$registry_stale" ]; then
+  bad "registry     $registry_total entries for $ADDIN_NAME; stale:"
+  printf '                 %s\n' $registry_stale
+  echo "               Quit Fusion, then ./scripts/fix-duplicate-registration.sh"
+  note_fail
+elif [ "$registry_total" = "0" ]; then
+  warn "registry     no entry yet (Fusion has not loaded the add-in)"
+else
+  ok "registry     1 entry, no duplicates"
 fi
 
 echo
