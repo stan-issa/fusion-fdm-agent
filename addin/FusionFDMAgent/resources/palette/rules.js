@@ -26,8 +26,9 @@
       rules: document.getElementById("view-rules")
     },
     check: document.getElementById("rules-check"),
-    settingsToggle: document.getElementById("rules-settings"),
-    config: document.getElementById("rules-config"),
+    list: document.getElementById("rules-list"),
+    toggleAll: document.getElementById("rules-toggle-all"),
+    selected: document.getElementById("rules-selected"),
     buildDir: document.getElementById("build-dir"),
     notes: document.getElementById("rules-notes"),
     findings: document.getElementById("rules-findings"),
@@ -36,6 +37,9 @@
   };
 
   var catalogue = [];
+  // Which rules have their parameters open. Kept here rather than read off
+  // the DOM, because the list is rebuilt whenever a setting is saved.
+  var expanded = {};
   var findings = [];
   // Finding ids are hashes of geometry, not positions in a list, so a tick
   // survives a re-check: the same edge keeps the same id. That is the whole
@@ -89,8 +93,8 @@
   }
 
   function setBusy(busy) {
-    el.check.disabled = busy;
     el.check.textContent = busy ? "Checking…" : "Check model";
+    updateCheck();
     updateApply();
   }
 
@@ -103,7 +107,7 @@
       return;
     }
     catalogue = payload.rules || [];
-    renderConfig();
+    renderRules();
   });
 
   bridge.on("rulesResult", function (payload) {
@@ -390,37 +394,77 @@
       : "";
   }
 
-  /* -- settings --------------------------------------------------------- */
+  /* -- the rule list ---------------------------------------------------- */
 
-  function renderConfig() {
-    el.config.innerHTML = "";
-    catalogue.forEach(function (rule) {
-      el.config.appendChild(renderRuleConfig(rule));
+  function picked() {
+    return catalogue.filter(function (rule) {
+      return rule.enabled !== false;
     });
   }
 
-  function renderRuleConfig(rule) {
-    var block = document.createElement("div");
-    block.className = "rule-config";
-
-    var head = document.createElement("label");
-    head.className = "rule-enable";
-
-    var toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.checked = rule.enabled !== false;
-    toggle.addEventListener("change", function () {
-      bridge.send("rulesSetParams", { rule: rule.id, enabled: toggle.checked });
+  function renderRules() {
+    el.list.innerHTML = "";
+    catalogue.forEach(function (rule) {
+      el.list.appendChild(renderRule(rule));
     });
-    head.appendChild(toggle);
-    head.appendChild(document.createTextNode(" " + rule.title));
-    block.appendChild(head);
-    block.appendChild(line("muted", rule.description));
+    updateCheck();
+  }
 
+  function renderRule(rule) {
+    var row = document.createElement("div");
+    row.className = "rule";
+
+    var head = document.createElement("div");
+    head.className = "rule-head";
+
+    var pick = document.createElement("label");
+    pick.className = "rule-pick";
+
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = rule.enabled !== false;
+    box.addEventListener("change", function () {
+      rule.enabled = box.checked;
+      updateCheck();
+      // Persisted, so the selection is still there next time the panel opens.
+      bridge.send("rulesSetParams", { rule: rule.id, enabled: box.checked });
+    });
+    pick.appendChild(box);
+
+    var name = document.createElement("span");
+    name.className = "rule-name";
+    name.textContent = rule.title;
+    name.title = rule.description || "";
+    pick.appendChild(name);
+    head.appendChild(pick);
+
+    var params = document.createElement("div");
+    params.className = "rule-params";
+    params.hidden = !expanded[rule.id];
+
+    if ((rule.params || []).length) {
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "linkish rule-options";
+      toggle.textContent = "Options";
+      toggle.setAttribute("aria-expanded", params.hidden ? "false" : "true");
+      toggle.addEventListener("click", function () {
+        params.hidden = !params.hidden;
+        expanded[rule.id] = !params.hidden;
+        toggle.setAttribute("aria-expanded", params.hidden ? "false" : "true");
+      });
+      head.appendChild(toggle);
+    }
+    row.appendChild(head);
+
+    if (rule.description) {
+      params.appendChild(line("muted", rule.description));
+    }
     (rule.params || []).forEach(function (param) {
-      block.appendChild(renderParam(rule, param));
+      params.appendChild(renderParam(rule, param));
     });
-    return block;
+    row.appendChild(params);
+    return row;
   }
 
   function renderParam(rule, param) {
@@ -459,10 +503,39 @@
     return wrapper;
   }
 
+  function updateCheck() {
+    var chosen = picked().length;
+    el.check.disabled = chosen === 0 || Boolean(pending);
+    el.selected.textContent = catalogue.length
+      ? chosen + " of " + catalogue.length + " selected"
+      : "";
+    el.toggleAll.textContent =
+      chosen === catalogue.length && catalogue.length ? "Select none" : "Select all";
+    el.toggleAll.disabled = catalogue.length === 0;
+  }
+
   /* -- input ------------------------------------------------------------ */
 
   el.check.addEventListener("click", function () {
-    request("rulesCheck", {});
+    var chosen = picked().map(function (rule) {
+      return rule.id;
+    });
+    if (chosen.length) {
+      // Always explicit. The panel's ticks are what the user is looking at,
+      // so they decide what runs rather than the stored defaults.
+      request("rulesCheck", { rules: chosen });
+    }
+  });
+
+  el.toggleAll.addEventListener("click", function () {
+    var wanted = picked().length < catalogue.length;
+    catalogue.forEach(function (rule) {
+      if (rule.enabled !== wanted) {
+        rule.enabled = wanted;
+        bridge.send("rulesSetParams", { rule: rule.id, enabled: wanted });
+      }
+    });
+    renderRules();
   });
 
   el.apply.addEventListener("click", function () {
@@ -472,12 +545,6 @@
     if (chosen.length) {
       request("rulesApply", { findingIds: chosen });
     }
-  });
-
-  el.settingsToggle.addEventListener("click", function () {
-    var open = el.config.hidden;
-    el.config.hidden = !open;
-    el.settingsToggle.setAttribute("aria-expanded", open ? "true" : "false");
   });
 
   show("chat");

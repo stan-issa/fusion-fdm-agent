@@ -23,7 +23,7 @@ because that is the shape Fusion's API imposes.
 | `approvalReply` | `{id, allow}` | The user's answer to an approval card. |
 | `restart` | `{}` | Kill and respawn the sidecar. |
 | `rulesList` | `{}` | Ask for the rule catalogue and its current settings. |
-| `rulesCheck` | `{requestId, rules?, params?}` | Run the rules over the open design. |
+| `rulesCheck` | `{requestId, rules?, params?}` | Run the rules over the open design. The panel always names them explicitly — its ticks are what the user is looking at, so they decide what runs rather than the stored defaults. Omitting `rules`, as the agent does, runs every enabled one. |
 | `rulesApply` | `{requestId, findingIds[]}` | Apply the ticked findings. |
 | `rulesReveal` | `{findingId}` | Select that finding's geometry in the canvas. |
 | `rulesIgnore` | `{findingId, ignore}` | Mark the geometry so future checks pass over it. |

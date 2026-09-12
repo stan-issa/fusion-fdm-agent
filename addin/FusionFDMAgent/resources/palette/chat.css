@@ -333,6 +333,10 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+#rules-selected {
+  margin-left: auto;
+}
+
 button.linkish {
   background: transparent;
   color: var(--accent);
@@ -367,31 +371,56 @@ button.linkish {
 
 .notes p { margin: 2px 0; }
 
-.rules-config {
+/* The rules to check, always visible: the ticks decide what "Check model"
+   runs, so hiding them behind a disclosure would hide the control itself. */
+.rules-list {
   margin: 8px 10px 0;
-  padding: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-sunken);
   flex: 0 0 auto;
-  max-height: 40%;
+  max-height: 45%;
   overflow-y: auto;
 }
 
-.rule-config + .rule-config {
-  margin-top: 10px;
-  padding-top: 10px;
+.rule + .rule {
   border-top: 1px solid var(--border);
 }
 
-.rule-enable {
+.rule-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
+  padding: 6px 8px;
 }
 
-.rule-config .muted { margin: 2px 0 6px; }
+.rule-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.rule-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-options {
+  flex: 0 0 auto;
+}
+
+.rule-params {
+  padding: 0 8px 8px 28px;
+}
+
+.rule-params .muted {
+  margin: 0 0 6px;
+}
 
 .rule-param {
   display: flex;

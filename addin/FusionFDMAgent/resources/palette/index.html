@@ -42,14 +42,16 @@
   </section>
 
   <section id="view-rules" class="view" role="tabpanel" hidden>
+    <div id="rules-list" class="rules-list" role="group"
+         aria-label="Rules to check"></div>
+
     <div class="rules-top">
-      <button type="button" id="rules-check">Check model</button>
-      <button type="button" id="rules-settings" class="linkish"
-              aria-expanded="false">Settings</button>
+      <button type="button" id="rules-check" disabled>Check model</button>
+      <button type="button" id="rules-toggle-all" class="linkish">Select all</button>
+      <span id="rules-selected" class="muted"></span>
     </div>
 
     <p id="build-dir" class="build-dir" hidden></p>
-    <div id="rules-config" class="rules-config" hidden></div>
     <div id="rules-notes" class="notes" hidden></div>
 
     <main id="rules-findings" class="findings" aria-live="polite">

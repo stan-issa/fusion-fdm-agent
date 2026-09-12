@@ -21,8 +21,10 @@ guess:
 | **Teardrop horizontal bores** | Bores running across the build direction (within 30° of horizontal), at any diameter, whose flat roof cannot print | A 45° teardrop roof, tangent to the bore, so the original circular clearance is preserved |
 | **Slope ledge undersides** | Straight ledges projecting from a wall, whose flat underside is a 90° overhang | A 45° triangular gusset filling the corner beneath it. The top of the ledge is untouched |
 
-Press **Check model**, tick what you want, press **Apply**. That click is the
-approval — you have already seen exactly what you selected.
+Tick the rules you want at the top of the panel, press **Check model**, then
+tick the findings to fix and press **Apply**. That click is the approval — you
+have already seen exactly what you selected. Each rule's **Options** holds its
+thresholds; both the ticks and the thresholds are remembered.
 
 Two things the panel always tells you, because findings are worthless without
 them. **Which way the part builds**, and whether that came from a face you
