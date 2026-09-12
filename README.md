@@ -1,11 +1,43 @@
 # Fusion FDM Agent
 
-An Autodesk Fusion add-in that puts a **chat panel** in the Design workspace and
-wires it to an external coding agent (Claude Code, or Codex later).
+An Autodesk Fusion add-in with two panels in the Design workspace: a **chat**
+wired to an external coding agent (Claude Code, or Codex later), and **Rules** —
+a set of FDM printability checks that find problems in the open model and fix
+the ones you tick.
 
 Status: **working**. The agent reads the open design and can change it — with
 your approval for anything that modifies the document. A stub `echo` backend is
 kept for testing the plumbing without a model; Codex is detection-only.
+
+## Rules
+
+Three checks, run against the real geometry rather than by asking a model to
+guess:
+
+| Rule | Finds | Fixes |
+| --- | --- | --- |
+| **Chamfer bed-contact edges** | The outline where the part meets the bed | A chamfer, 0.3 mm by default — skipping edges too close to a neighbour to survive it |
+| **Add lead-ins to holes** | Plain cylindrical bores with a bare mouth | A 0.5 mm entrance chamfer; the bore diameter below it is untouched |
+| **Teardrop horizontal bores** | Bores running across the build direction (within 30° of horizontal), at any diameter, whose flat roof cannot print | A 45° teardrop roof, tangent to the bore, so the original circular clearance is preserved |
+
+Press **Check model**, tick what you want, press **Apply**. That click is the
+approval — you have already seen exactly what you selected.
+
+Two things the panel always tells you, because findings are worthless without
+them. **Which way the part builds**, and whether that came from a face you
+selected, an inference, or a fallback guess. And **what each rule deliberately
+skipped, with the reason** — a 0.8 mm fin that a 0.3 mm chamfer would destroy
+is reported as skipped, not quietly dropped. A rule that finds nothing says
+what it looked at and why it passed over it, because "nothing to fix" and
+"nothing matched my thresholds" are different answers and only one of them
+means you are done.
+
+Some exclusions cannot be read off the geometry: a bearing seat and a clearance
+hole are the same cylinder. **Ignore** marks one on the model itself, so it
+travels with the document.
+
+The rules are Python modules in `addin/FusionFDMAgent/lib/rules/`; adding one
+means writing `detect` and `apply` and nothing else.
 
 ## What the agent can do
 
@@ -13,8 +45,16 @@ kept for testing the plumbing without a model; Codex is detection-only.
 | --- | --- | --- |
 | `get_design_tree` | Components, bodies (bounding boxes and volumes in mm), sketch names | no |
 | `get_parameters` | User and named model parameters, with expressions and units | no |
+| `get_selection` | What you have selected, so "this face" means something | no |
+| `list_rules` | The printability rules and their settings | no |
+| `check_rules` | Run the rules and return findings, each with a stable id | no |
 | `set_parameter` | Change one parameter's expression | **yes** |
 | `run_fusion_script` | Execute Python against the live Fusion API | **yes** |
+| `apply_rule_fix` | Apply the fixes for named findings | **yes** |
+
+The agent and the panel share one session, so *"check this part for
+printability"* in the chat fills in the Rules tab beside it, and a fix you
+apply yourself is a fix the agent can see.
 
 Approval is a card in the panel showing the request verbatim — the script as
 code, not a summary — with Allow and Deny. Denying tells the agent to ask rather
@@ -97,6 +137,9 @@ is written when you change the backend in the panel, and can be edited by hand:
   command can reach.
 - `claude.systemPromptExtra` — appended to the built-in prompt. Put your printer,
   materials and tolerances here.
+- `rules` — per-rule `enabled` flag and parameter overrides. The panel's
+  Settings writes this; only what you have changed is stored, so a rule gaining
+  a parameter needs no migration.
 - `claude.autoApprove` — off by default. Skips the approval card for
   `set_parameter` and `run_fusion_script`, which means generated code runs
   against your open document unseen.
@@ -116,7 +159,7 @@ changes, then **Add-Ins → Stop → Run** in Fusion.
 > drops the stale entry from Fusion's registry (backing the file up first).
 > `./scripts/doctor.sh` checks for both conditions.
 
-`./scripts/test.sh` runs three suites with only Fusion's UI objects stubbed:
+`./scripts/test.sh` runs four suites with only Fusion's UI objects stubbed:
 
 - **round trip** — palette → bridge → sidecar → pump → palette. Fails if the
   reply stops arriving incrementally, which is the regression that matters: a
@@ -126,6 +169,16 @@ changes, then **Add-Ins → Stop → Run** in Fusion.
   client, covering the token check and the hop onto the main thread.
 - **approvals** — that a prompt nobody answers, and a turn cancelled mid-prompt,
   both come back as refusals rather than parking the agent forever.
+- **rules** — the geometry the rules reason with (teardrop tangency, the
+  thin-wall measurement), finding ids staying stable under floating-point
+  noise, parameter clamping, and that the two processes expose the same tools
+  and gate the same ones. The stubs stop short of a fake B-Rep kernel, which
+  would only ever test itself.
+
+Anything needing real topology is verified in Fusion against the part
+`scripts/make_test_part.py` builds — run it from **Utilities → Scripts and
+Add-Ins**. Every feature in it exists because some rule should react to it in a
+particular way, and the script says which.
 
 `FDM_AGENT_BACKEND` overrides which backend the sidecar starts on, which is how
 the test pins itself to the stub instead of making billable model calls.
@@ -167,12 +220,18 @@ addin/FusionFDMAgent/   the add-in (stdlib only)
   lib/sidecar.py        subprocess supervision
   lib/toolserver.py     loopback server the sidecar calls into
   lib/design_tools.py   the Fusion operations themselves
-  resources/palette/    the chat UI
+  lib/selection.py      remembers what you last selected
+  lib/rules_controller.py  one rule session, shared by panel and agent
+  lib/rules/            the printability rules
+    geometry.py         pure maths, no adsk import
+    fusion_geom.py      the thin layer that touches Fusion
+    session.py          findings, staleness, apply ordering
+  resources/palette/    the chat and rules UI
 sidecar/fdm_sidecar/    the agent process
   backends/             claude (working), echo (stub), codex (detection only)
   fusion_tools.py       those operations as in-process MCP tools
   fusion_client.py      loopback client
 tests/                  round-trip, tool path, approvals + stubbed `adsk`
 scripts/                bootstrap, install, uninstall, doctor, test,
-                        fix-duplicate-registration
+                        fix-duplicate-registration, make_test_part
 ```

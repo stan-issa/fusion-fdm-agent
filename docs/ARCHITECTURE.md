@@ -186,6 +186,136 @@ the full API. That is deliberate: it is what makes the agent able to do real
 work rather than only nudge parameters. The mitigations are the approval gate,
 the script being shown in full, and Fusion's own timeline and undo.
 
+## The rules
+
+`run_fusion_script` can do anything, which makes it the wrong tool for a check
+you want to run twice. The model would write fresh BRep Python for every part,
+and the user would read a wall of generated code to find out whether their
+part has an elephant's-foot problem. So the printability checks are ordinary
+Python modules under `lib/rules/`, and the agent orchestrates them rather than
+reimplementing them.
+
+A rule is two functions and a few constants: `detect(context, params)` returns
+findings, `apply(context, findings, params)` fixes them. Nothing more
+ceremonious, because a rule library only grows if adding one is cheap.
+
+### The split that makes them testable
+
+`geometry.py` and `signature.py` import nothing from Fusion and reason about
+plain numbers; `fusion_geom.py` does nothing *but* turn Fusion objects into
+those numbers. Every subtle thing — teardrop tangency, the thin-wall
+measurement, id stability — lives on the pure side and is unit-tested there.
+The impure side is thin enough to read.
+
+### Findings are identified by their geometry
+
+A finding's id is `<rule>:<hash of a quantised description of the geometry>`.
+Numbering findings in discovery order would have been simpler and wrong: a
+re-check reorders them, and the box the user ticked silently becomes a
+different edge.
+
+Hashing the geometry buys three things at once. Ticks survive a re-check.
+Re-resolution after a fix needs no separate mechanism — re-run detection and
+look the id up, and an id that no longer appears describes geometry that has
+genuinely gone. And two rules aimed at the same feature produce the same
+suffix, which is how the session notices that a teardrop and a lead-in are
+fighting over one bore.
+
+### Applying, and the order it happens in
+
+Every feature regenerates the body and invalidates every other edge reference
+held from detection. Two things follow.
+
+**Batching is correctness, not tidiness.** Chamfering forty footprint edges as
+forty features would leave thirty-nine of them pointing at edges that no longer
+exist. One feature over an `ObjectCollection` of all of them sidesteps the
+problem; one timeline node and one undo step are a bonus. When Fusion rejects
+the batch — and it will not say which edge caused it — the fallback retries one
+finding at a time, re-resolving between each, so the fixable ones still land.
+
+**`RULES` is ordered most-destructive first**, and that order is the order
+fixes are applied in. Teardropping a bore destroys the entrance ring a lead-in
+would have chamfered; chamfering the footprint rewrites every edge of the
+bottom face. Going the other way round would leave the later rule aiming at
+geometry the earlier one had already rewritten.
+
+Afterwards the session re-checks and returns *that*, rather than crossing items
+off a list it can no longer vouch for.
+
+### A feature that was created is not a feature that worked
+
+Fusion returns an errored feature rather than raising when a chamfer cannot be
+built, and leaves a red mark in the browser. Everything the rules create is
+checked against `healthState` and rolled back if it is broken. Reporting
+"applied" for a failed fix is the one outcome worse than reporting the failure.
+
+### Which way is up
+
+Two of the three rules are meaningless without a build direction. It comes
+from the user's selected face if there is one, otherwise from the largest
+downward-facing planar face at the bottom of the body, otherwise from +Z. The
+answer always carries *which* of those it was, because a finding is only as
+good as the orientation behind it, and an assumption the user can see is an
+assumption they can correct.
+
+Outward normals are the trap here. Neither `face.geometry.normal` nor the
+face's evaluator answers "which way is out of the solid" — both describe the
+underlying surface, whose parameterisation may run opposite to the face using
+it. `isParamReversed` reconciles them and `pointContainment` confirms it.
+
+### Selection has to be captured, not read
+
+Reading `ui.activeSelections` when a tool runs does not work: clicking into the
+palette to type moves focus, and Fusion clears the selection on the way. By the
+time "chamfer this face" reaches a tool, the face is no longer selected. So
+`lib/selection.py` watches `activeSelectionChanged` and keeps the last
+*non-empty* selection, and tools read that. Emptying the selection is not
+recorded — it is almost always the side effect of clicking elsewhere, not an
+instruction.
+
+### Two ways to apply, one session
+
+The Rules tab and the agent's tools are two front ends onto the same
+`RuleSession`, reached through `lib/rules_controller.py`. If each kept its own
+state they would disagree the moment either was used.
+
+Ticking findings in the panel and pressing Apply *is* the approval; there is no
+card, because the user has already seen exactly what they selected and asking
+twice only teaches people to click through. The agent's path still raises one —
+and because the request on the wire is a list of opaque ids, `bridge.py`
+enriches it from the session so the card can say "Chamfer 0.3 mm on 7
+bed-contact edges of Body1". The ids stay in the payload: the card explains the
+request, it does not replace it.
+
+### What the rules refuse to do
+
+Conservative by design, because a wrong fix is worse than a missing one. A bore
+that is not a complete cylinder is reported, not teardropped — something
+crosses it and where the roof belongs is ambiguous. A bore sharing its axis
+with another is treated as a seat. Threaded faces are excluded outright. And
+because no amount of geometry can distinguish a bearing seat from a clearance
+hole, `Ignore` writes a Fusion attribute on the entity, which travels with the
+document rather than living in a settings file that knows nothing about which
+model it describes.
+
+Every skipped edge carries its reason to the panel, and a rule that finds
+nothing says what it examined. A guard that drops geometry silently is
+indistinguishable from a bug — which is not a hypothetical: teardrop shipped
+with a 6 mm minimum diameter that excluded every fastener clearance hole on a
+normal part, and said nothing at all about doing so.
+
+A finding that cannot be fixed still carries geometry to *show*. It has no
+`entities`, because there is no fix for them to act on, but its `reveal` list
+points at the bore or the face anyway — "which hole do you mean?" is the first
+thing anyone reads an unfixable finding and wonders.
+
+Rules also have to cope with each other's output. A hole that has been given
+lead-ins no longer opens onto a flat face at either end; it opens into a
+chamfer cone, and the flat face is one step beyond. Teardrop walks across the
+cone to find it, and measures its cut from that plane rather than from the
+bore's end ring. Treating the cone as a dead end made every hole the other
+rule had already improved look impossible to fix.
+
 ## Planned passes
 
 - **Pass 1 (done).** Structure, install, panel, palette, chat UI, sidecar,
@@ -194,8 +324,12 @@ the script being shown in full, and Fusion's own timeline and undo.
   session continuity, cancellation via `interrupt()`, tool-use display.
 - **Pass 3 (done).** Design read/write over the loopback tool server, with
   per-call approval for anything that mutates the document.
+- **Pass 4 (done).** Selection awareness, the printability rules engine, and
+  the Rules tab: `bed_chamfer`, `hole_lead_in`, `teardrop_bore`.
 - **Codex.** Only once its CLI surface has been read first-hand; the current
   stub deliberately does not guess at it.
-- **Next, most likely.** Selection awareness (`get_selection`, so "this face"
-  means something), export for slicing, and letting the agent read back the
-  result of its own script rather than assuming it worked.
+- **Next, most likely.** More rules — overhang angles, wall thickness against
+  nozzle diameter, unsupported bridges. Bores split into several faces by a
+  STEP import, which all three rules currently pass over. Export for slicing.
+  And letting the agent read back the result of its own script rather than
+  assuming it worked.

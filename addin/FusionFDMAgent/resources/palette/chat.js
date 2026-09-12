@@ -1,5 +1,5 @@
 /*
- * Chat palette front end.
+ * Chat palette front end, and the transport both views share.
  *
  * Transport (see docs/PROTOCOL.md):
  *   JS  -> Python   adsk.fusionSendData(action, JSON.stringify(payload))
@@ -8,6 +8,11 @@
  * The `adsk` global only exists inside a Fusion palette, so every call is
  * guarded -- that lets this page be opened in an ordinary browser while
  * working on the styling.
+ *
+ * `window.fdm` is the seam between the two views: this file owns the pipe and
+ * the chat, rules.js registers its own verbs on it. Keeping the router a
+ * table rather than a switch is what lets a view be added without editing the
+ * transport.
  */
 (function () {
   "use strict";
@@ -94,16 +99,50 @@
     }
   };
 
+  var routes = {};
+
   function route(action, payload) {
-    switch (action) {
-      case "state":   applyState(payload); break;
-      case "delta":   appendDelta(payload); break;
-      case "toolUse": appendTool(payload); break;
-      case "approval": appendApproval(payload); break;
-      case "turnEnd": endTurn(payload); break;
-      case "log":     console.log("[sidecar]", payload.level, payload.message); break;
-      default:        console.warn("[fdm-agent] unknown action", action);
+    var handler = routes[action];
+    if (handler) {
+      handler(payload);
+      return;
     }
+    // Unknown verbs are logged and ignored, never fatal: the sidecar and the
+    // palette are versioned by deployment, not by handshake.
+    console.warn("[fdm-agent] unknown action", action);
+  }
+
+  function on(action, handler) {
+    routes[action] = handler;
+  }
+
+  on("state", applyState);
+  on("delta", appendDelta);
+  on("toolUse", appendTool);
+  on("approval", appendApproval);
+  on("turnEnd", endTurn);
+  on("log", function (payload) {
+    console.log("[sidecar]", payload.level, payload.message);
+  });
+
+  // The seam rules.js hangs off. Registered before it loads, because script
+  // tags run in order and it would otherwise have nothing to register on.
+  window.fdm = { send: toPython, on: on, onReady: onReady };
+
+  var readyHandlers = [];
+
+  function onReady(handler) {
+    readyHandlers.push(handler);
+  }
+
+  function announceReady() {
+    readyHandlers.forEach(function (handler) {
+      try {
+        handler();
+      } catch (err) {
+        console.error("[fdm-agent] ready handler failed", err);
+      }
+    });
   }
 
   /* -- rendering ------------------------------------------------------- */
@@ -256,9 +295,19 @@
     if (name === "set_parameter") {
       return "Change a parameter?";
     }
+    if (name === "apply_rule_fix") {
+      var count = (payload.findings || []).length;
+      return count === 1 ? "Apply this fix?" : "Apply " + count + " fixes?";
+    }
     return "Allow " + name + "?";
   }
 
+  /*
+   * What the request actually is, never a reassuring summary of it. For a
+   * rule fix that means the human-readable line the add-in resolved for each
+   * finding *and* the id it resolved it from, so the card describes the
+   * request rather than replacing it.
+   */
   function approvalBody(payload) {
     var input = payload.input || {};
     if (typeof input.code === "string") {
@@ -266,6 +315,15 @@
     }
     if (typeof input.name === "string" && input.expression !== undefined) {
       return input.name + " = " + input.expression;
+    }
+    if (payload.findings && payload.findings.length) {
+      return payload.findings.map(function (finding) {
+        if (finding.unknown) {
+          return finding.id + "  (no longer in the current results)";
+        }
+        return [finding.title, finding.fix ? "    " + finding.fix : "",
+                "    " + finding.id].filter(Boolean).join("\n");
+      }).join("\n\n");
     }
     return JSON.stringify(input, null, 2);
   }
@@ -366,5 +424,6 @@
 
   toPython("ready", {});
   waitForBridge(BRIDGE_ATTEMPTS);
+  announceReady();
   el.input.focus();
 }());

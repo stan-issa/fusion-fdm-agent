@@ -18,22 +18,54 @@
     </span>
   </header>
 
+  <nav class="tabs" role="tablist" aria-label="Panel">
+    <button type="button" class="tab" role="tab" data-view="chat" aria-selected="true">Chat</button>
+    <button type="button" class="tab" role="tab" data-view="rules" aria-selected="false">Rules</button>
+  </nav>
+
   <p id="detail" class="detail" hidden></p>
 
-  <main id="log" class="log" aria-live="polite">
-    <div class="empty" id="empty">
-      <p>Ask the agent about the active design.</p>
-      <p class="muted">Nothing is modified without your confirmation.</p>
-    </div>
-  </main>
+  <section id="view-chat" class="view" role="tabpanel">
+    <main id="log" class="log" aria-live="polite">
+      <div class="empty" id="empty">
+        <p>Ask the agent about the active design.</p>
+        <p class="muted">Nothing is modified without your confirmation.</p>
+      </div>
+    </main>
 
-  <form class="composer" id="composer">
-    <textarea id="input" rows="1" placeholder="Message the agent…"
-              aria-label="Message" autocomplete="off"></textarea>
-    <button type="submit" id="send" title="Send (Enter)" disabled>Send</button>
-    <button type="button" id="cancel" title="Stop the current reply" hidden>Stop</button>
-  </form>
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" placeholder="Message the agent…"
+                aria-label="Message" autocomplete="off"></textarea>
+      <button type="submit" id="send" title="Send (Enter)" disabled>Send</button>
+      <button type="button" id="cancel" title="Stop the current reply" hidden>Stop</button>
+    </form>
+  </section>
+
+  <section id="view-rules" class="view" role="tabpanel" hidden>
+    <div class="rules-top">
+      <button type="button" id="rules-check">Check model</button>
+      <button type="button" id="rules-settings" class="linkish"
+              aria-expanded="false">Settings</button>
+    </div>
+
+    <p id="build-dir" class="build-dir" hidden></p>
+    <div id="rules-config" class="rules-config" hidden></div>
+    <div id="rules-notes" class="notes" hidden></div>
+
+    <main id="rules-findings" class="findings" aria-live="polite">
+      <div class="empty">
+        <p>Check the open design against the printability rules.</p>
+        <p class="muted">Select the bed face first if the part is not sitting on Z&nbsp;=&nbsp;0.</p>
+      </div>
+    </main>
+
+    <footer class="rules-actions">
+      <span id="rules-count" class="muted"></span>
+      <button type="button" id="rules-apply" disabled>Apply selected</button>
+    </footer>
+  </section>
 
   <script src="chat.js"></script>
+  <script src="rules.js"></script>
 </body>
 </html>

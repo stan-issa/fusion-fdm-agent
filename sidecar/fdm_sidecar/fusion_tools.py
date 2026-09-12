@@ -20,8 +20,12 @@ SERVER_NAME = "fusion"
 TOOL_NAMES = [
     "get_design_tree",
     "get_parameters",
+    "get_selection",
+    "list_rules",
+    "check_rules",
     "set_parameter",
     "run_fusion_script",
+    "apply_rule_fix",
 ]
 
 ALLOWED_TOOLS = ["mcp__{}__{}".format(SERVER_NAME, name) for name in TOOL_NAMES]
@@ -30,6 +34,7 @@ ALLOWED_TOOLS = ["mcp__{}__{}".format(SERVER_NAME, name) for name in TOOL_NAMES]
 MUTATING_TOOLS = {
     "mcp__{}__set_parameter".format(SERVER_NAME),
     "mcp__{}__run_fusion_script".format(SERVER_NAME),
+    "mcp__{}__apply_rule_fix".format(SERVER_NAME),
 }
 
 
@@ -87,6 +92,62 @@ async def get_parameters(args: dict) -> dict:
 
 
 @tool(
+    "get_selection",
+    "What the user currently has selected in Fusion. Call this whenever they "
+    "say 'this face', 'these holes' or 'the bottom' -- it is the only way to "
+    "know what they are pointing at. The selection is remembered from when "
+    "they made it, so check capturedSecondsAgo before trusting an old one.",
+    {"type": "object", "properties": {}},
+)
+async def get_selection(args: dict) -> dict:
+    return await _forward("get_selection", {})
+
+
+@tool(
+    "list_rules",
+    "The FDM printability rules available, with their tunable parameters and "
+    "current values. Call this before check_rules if you need to know what "
+    "can be checked or what a parameter is currently set to.",
+    {"type": "object", "properties": {}},
+)
+async def list_rules(args: dict) -> dict:
+    return await _forward("list_rules", {})
+
+
+@tool(
+    "check_rules",
+    "Check the open design against the printability rules and return the "
+    "findings, each with a stable id. Read-only. Prefer this over writing "
+    "geometry-inspection scripts: the rules measure the model properly, "
+    "explain what they skipped and why, and produce ids that apply_rule_fix "
+    "can act on. Also report the buildDirection it used and where that came "
+    "from, since a wrong one invalidates the answer.",
+    {
+        "type": "object",
+        "properties": {
+            "rules": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rule ids to run. Omit to run every enabled rule.",
+            },
+            "params": {
+                "type": "object",
+                "description": (
+                    "Per-rule parameter overrides for this call only, keyed by "
+                    "rule id, e.g. {\"bed_chamfer\": {\"size_mm\": 0.4}}."
+                ),
+            },
+        },
+    },
+)
+async def check_rules(args: dict) -> dict:
+    return await _forward("check_rules", {
+        "rules": args.get("rules"),
+        "params": args.get("params"),
+    })
+
+
+@tool(
     "set_parameter",
     "Change one parameter's expression, e.g. wall_thickness -> '2.4 mm'. "
     "Prefer this over a script when a parameter already exists. Requires the "
@@ -129,10 +190,49 @@ async def run_fusion_script(args: dict) -> dict:
     return await _forward("run_fusion_script", {"code": args.get("code", "")})
 
 
+@tool(
+    "apply_rule_fix",
+    "Apply the fixes for findings returned by check_rules, named by their "
+    "ids. Changes the model, so it requires the user's approval. Fixes are "
+    "applied in a safe order and the model is re-checked afterwards, so the "
+    "result is the fresh finding list -- use it rather than assuming what is "
+    "left. Say which findings you are about to fix, and why, before calling.",
+    {
+        "type": "object",
+        "properties": {
+            "finding_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Finding ids from check_rules, e.g. 'bed_chamfer:1f2a3b4c'.",
+            },
+            "params": {
+                "type": "object",
+                "description": "Per-rule parameter overrides, keyed by rule id.",
+            },
+        },
+        "required": ["finding_ids"],
+    },
+)
+async def apply_rule_fix(args: dict) -> dict:
+    return await _forward("apply_rule_fix", {
+        "finding_ids": args.get("finding_ids") or [],
+        "params": args.get("params"),
+    })
+
+
 def build_server():
     """Create the in-process MCP server holding the tools above."""
     return create_sdk_mcp_server(
         name=SERVER_NAME,
         version="0.1.0",
-        tools=[get_design_tree, get_parameters, set_parameter, run_fusion_script],
+        tools=[
+            get_design_tree,
+            get_parameters,
+            get_selection,
+            list_rules,
+            check_rules,
+            set_parameter,
+            run_fusion_script,
+            apply_rule_fix,
+        ],
     )

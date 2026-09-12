@@ -59,6 +59,14 @@ DEFAULT_SETTINGS = {
         "allowBash": False,
         "systemPromptExtra": "",
     },
+    # Printability rules. Each rule declares its own parameters and defaults
+    # in lib/rules/<rule>.py; this file only holds what the user has changed,
+    # so a rule gaining a parameter does not need a settings migration.
+    "rules": {
+        "bed_chamfer": {"enabled": True},
+        "hole_lead_in": {"enabled": True},
+        "teardrop_bore": {"enabled": True},
+    },
 }
 
 

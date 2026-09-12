@@ -285,3 +285,223 @@ button:disabled {
   color: var(--fg-muted);
   border-color: var(--border);
 }
+
+/* Tabs ----------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  flex: 0 0 auto;
+}
+
+.tab {
+  background: transparent;
+  color: var(--fg-muted);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 7px 12px;
+  font-weight: 500;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+/* A view fills what is left and lays its own children out vertically, so
+   the scrolling region inside it still grows. */
+.view {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.view[hidden] { display: none; }
+
+/* Rules ---------------------------------------------------------------- */
+
+.rules-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 0;
+  flex: 0 0 auto;
+}
+
+button.linkish {
+  background: transparent;
+  color: var(--accent);
+  border: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.build-dir {
+  margin: 8px 10px 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+/* An assumed direction is the one most likely to be wrong, so it does not
+   get to look as settled as a direction the user chose. */
+.build-dir[data-source="default"] { color: var(--pending); }
+
+.warn { color: var(--pending); }
+
+.notes {
+  margin: 8px 10px 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.notes p { margin: 2px 0; }
+
+.rules-config {
+  margin: 8px 10px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.rule-config + .rule-config {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.rule-enable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.rule-config .muted { margin: 2px 0 6px; }
+
+.rule-param {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.rule-param input, .rule-param select {
+  width: 8em;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.findings {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.finding-group h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--fg-muted);
+}
+
+.finding {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+}
+
+.finding + .finding { margin-top: 6px; }
+
+.finding.not-fixable {
+  opacity: .8;
+  border-style: dashed;
+}
+
+.finding-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.finding-title {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.finding.not-fixable .finding-title { cursor: default; }
+
+.finding-detail, .finding-fix {
+  margin: 4px 0 0 20px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.finding-fix { color: var(--accent); }
+
+.skipped {
+  margin: 6px 0 0 20px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.skipped summary { cursor: pointer; }
+.skipped ul { margin: 4px 0 0; padding-left: 16px; }
+
+.finding-actions {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 0 16px;
+}
+
+.outcome {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.outcome.has-failures {
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+
+.outcome-head { margin: 0; font-weight: 600; }
+.outcome-detail { margin: 4px 0 0; font-size: 12px; }
+
+.rules-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  flex: 0 0 auto;
+}

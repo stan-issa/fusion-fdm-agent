@@ -24,6 +24,8 @@ run "round trip (palette -> sidecar -> palette)" \
   "$SYS_PY" "$REPO_ROOT/tests/test_roundtrip.py"
 run "tool path (sidecar -> loopback -> main thread)" \
   "$SYS_PY" "$REPO_ROOT/tests/test_tools.py"
+run "rules (geometry, identity, parameters, tool parity)" \
+  "$SYS_PY" "$REPO_ROOT/tests/test_rules.py"
 run "approvals" \
   "$VENV_PY" "$REPO_ROOT/tests/test_approval.py"
 

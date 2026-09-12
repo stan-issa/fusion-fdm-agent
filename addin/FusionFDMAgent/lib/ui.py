@@ -12,7 +12,7 @@ import traceback
 import adsk.core
 
 from .. import config
-from . import design_tools
+from . import design_tools, rules_controller, selection
 from .bridge import ChatBridge
 from .events import MainThreadPump
 from .logging_util import get_logger
@@ -95,6 +95,11 @@ class AddInUI:
         self._control = self._panel.controls.addCommand(self._command_definition)
         self._control.isPromoted = True
 
+        # Started before anything can ask what is selected: Fusion clears the
+        # selection when the palette takes focus, so it has to be captured as
+        # the user makes it rather than read when a tool runs.
+        selection.install(self._ui)
+
         self._pump.start(self._on_pumped)
         self._tool_server.start()
         self._log.info("UI started")
@@ -154,6 +159,16 @@ class AddInUI:
             except Exception:
                 self._log.error("bridge stop failed\n%s", traceback.format_exc())
             self._bridge = None
+
+        try:
+            selection.uninstall()
+        except Exception:
+            self._log.error("selection teardown failed\n%s", traceback.format_exc())
+
+        # The session holds live Fusion entities; outliving the add-in that
+        # found them is how a stale finding ends up pointing at another
+        # document's geometry.
+        rules_controller.reset()
 
         try:
             self._tool_server.stop()

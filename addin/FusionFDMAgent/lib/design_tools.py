@@ -16,7 +16,10 @@ import traceback
 import adsk.core
 import adsk.fusion
 
+from . import rules_controller, selection
 from .logging_util import get_logger
+from .rules import orientation
+from .rules.base import RuleError
 
 # Caps that keep a big assembly from flooding the model's context.
 MAX_DEPTH = 4
@@ -24,6 +27,7 @@ MAX_CHILDREN = 40
 MAX_BODIES = 40
 MAX_SKETCHES = 40
 MAX_SCRIPT_OUTPUT = 20000
+MAX_SELECTION = 20
 
 
 class ToolError(Exception):
@@ -168,6 +172,71 @@ def _parameter(parameter) -> dict:
     return info
 
 
+def get_selection() -> dict:
+    """What the user has selected in Fusion.
+
+    Reads the watcher's cache rather than ``activeSelections`` directly:
+    clicking into the chat panel moves focus, and Fusion clears the selection
+    on the way, so by the time a tool runs the face the user meant is gone.
+    """
+    watcher = selection.watcher()
+    if watcher is None:
+        raise ToolError("Selection tracking is not running. Restart the add-in.")
+
+    entities = watcher.entities()
+    described = [orientation.describe_entity(entity) for entity in entities[:MAX_SELECTION]]
+    payload = {"count": len(entities), "entities": described}
+    if len(entities) > MAX_SELECTION:
+        payload["truncated"] = len(entities) - MAX_SELECTION
+    age = watcher.age_seconds()
+    if age is not None:
+        # The selection is remembered, not read live, so its age is part of
+        # the answer: a five-minute-old selection may not be what the user
+        # means by "this face" any more.
+        payload["capturedSecondsAgo"] = int(age)
+        payload["stale"] = watcher.is_stale()
+    return payload
+
+
+# -- rules -----------------------------------------------------------------
+#
+# Thin wrappers. The work is in lib/rules, and it is reached through
+# rules_controller so that the agent and the Rules panel share one session
+# rather than each keeping its own idea of what was found.
+
+
+def list_rules() -> dict:
+    """The printability rules available, and their current settings."""
+    with _rule_errors():
+        return rules_controller.list_rules()
+
+
+def check_rules(rules=None, params=None) -> dict:
+    """Run the rules over the open design and report what they found."""
+    with _rule_errors():
+        return rules_controller.check_rules(rules, params)
+
+
+def apply_rule_fix(finding_ids=None, params=None) -> dict:
+    """Apply the fixes for the named findings, then re-check the model."""
+    with _rule_errors():
+        return rules_controller.apply_rule_fix(finding_ids, params)
+
+
+@contextlib.contextmanager
+def _rule_errors():
+    """Report a rule's own errors as tool errors, keeping tracebacks for bugs.
+
+    ``toolserver`` recognises ToolError by name and shows it to the user
+    instead of logging a traceback, which is right for "no design is open" and
+    wrong for a genuine crash.
+    """
+    try:
+        yield
+    except RuleError as exc:
+        raise ToolError(str(exc)) from None
+
+
 # -- write -----------------------------------------------------------------
 
 
@@ -263,11 +332,15 @@ def run_fusion_script(code: str) -> dict:
 
 
 # Tools that change the document, and therefore need the user's approval.
-MUTATING = frozenset({"set_parameter", "run_fusion_script"})
+MUTATING = frozenset({"set_parameter", "run_fusion_script", "apply_rule_fix"})
 
 REGISTRY = {
     "get_design_tree": get_design_tree,
     "get_parameters": get_parameters,
+    "get_selection": get_selection,
+    "list_rules": list_rules,
+    "check_rules": check_rules,
     "set_parameter": set_parameter,
     "run_fusion_script": run_fusion_script,
+    "apply_rule_fix": apply_rule_fix,
 }
