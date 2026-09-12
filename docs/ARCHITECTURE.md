@@ -359,6 +359,15 @@ than abandoned — a flange that cannot have its full reach on one side is still
 worth having on the other three. What cannot be trimmed is reported, and the
 bridge is left alone.
 
+There is a second limit beside "is anything in the way", and it is not the
+same question: **nothing a rib is made of may reach past the part's own
+extent**. Empty space next to the part is not the rib's to occupy — a support
+wider than the thing it supports fouls the brim and the skirt, and reads as a
+mistake even when it prints. That caps the grip tab, which therefore only
+appears where the part is wider than the bridge. Where the bridge runs to the
+edge the ribs finish flush, and the finding says so rather than quietly
+dropping a feature the user asked for.
+
 ### One face, two rules
 
 A bridge underside and a ledge underside are the same thing to look at: a flat

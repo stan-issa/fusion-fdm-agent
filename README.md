@@ -69,7 +69,13 @@ extrusion width and 0.2 mm layers, not a promise:
 | Top gap | 0.2 mm | check the empty layer in your slicer |
 | Side clearance | 0.5 mm | separate from the top gap |
 | Base flange | 4 mm / 0.6 mm | bed contact, trimmed near the model |
-| Grip tab | 5 mm | somewhere to pull |
+| Grip tab | 5 mm | somewhere to pull, within the part's own extent |
+
+No part of a rib reaches past the footprint of the part it supports —
+scaffolding wider than the thing it holds up fouls the brim and the skirt. So
+the grip tab only appears where the part is wider than the bridge. Where the
+bridge runs right to the edge, the ribs finish flush and the finding says so;
+pull them out from underneath.
 
 Calibrate before trusting them: print a bridge coupon with **0.9 and 1.35 mm
 ridges** at **0.2 and 0.4 mm top gaps**, take the pair that releases cleanly

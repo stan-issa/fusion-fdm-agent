@@ -697,6 +697,35 @@ def test_rib_buttress():
                if box.length_direction == (1.0, 0.0, 0.0)])
 
 
+# -- a support has no business being wider than the part -------------------
+
+
+def test_rib_stays_within_the_part():
+    print("keeping a rib inside the part")
+
+    room = bridge_ribs._room_for
+
+    # The part's own extent is the limit. Scaffolding wider than the thing it
+    # supports fouls the brim and the skirt, and reads as a mistake even when
+    # it prints.
+    check("a tab is capped by the part's edge",
+          close(room(2.0, 1.0, 2.3, 0.5), 0.3), room(2.0, 1.0, 2.3, 0.5))
+    check("a tab shorter than the room is unaffected",
+          close(room(2.0, 1.0, 9.0, 0.5), 0.5))
+    check("a bridge flush with the part's edge leaves no room",
+          close(room(2.0, 1.0, 2.0, 0.5), 0.0))
+    check("never negative when the part stops short",
+          close(room(2.0, 1.0, 1.5, 0.5), 0.0))
+
+    # The same, measured the other way along the axis.
+    check("the low end is capped too",
+          close(room(-2.0, -1.0, -2.3, 0.5), 0.3), room(-2.0, -1.0, -2.3, 0.5))
+    check("flush at the low end as well",
+          close(room(-2.0, -1.0, -2.0, 0.5), 0.0))
+    check("asking for nothing gets nothing",
+          close(room(-2.0, -1.0, -9.0, 0.0), 0.0))
+
+
 # -- where the teardrop cut runs -------------------------------------------
 #
 # Enough fake topology to walk, and no more: faces that know their surface
@@ -1057,7 +1086,7 @@ for test in (test_teardrop, test_vectors, test_units, test_distances,
              test_signatures, test_params, test_findings, test_catalogue,
              test_reveal, test_convexity, test_ledge_gusset,
              test_bridge_vs_ledge, test_rib_positions, test_rib_profile,
-             test_rib_buttress, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
+             test_rib_buttress, test_rib_stays_within_the_part, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
              test_document_identity, test_parity):
     test()
 

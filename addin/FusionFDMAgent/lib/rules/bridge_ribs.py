@@ -106,6 +106,10 @@ _BUTTRESS_FRACTION = 0.6
 # first. A blocked flange is trimmed back rather than abandoned.
 _TRIM_STEPS = (1.0, 0.5, 0.25)
 
+# A short distance to probe with when the question is only "is anything
+# there?" rather than "how much room is there?". Centimetres.
+_NUDGE = 0.02
+
 # Where to probe each block for material in the way, as fractions along it
 # and up it. Clear of the ends, so a probe does not land on a boundary.
 _ALONG = (0.1, 0.5, 0.9)
@@ -154,12 +158,12 @@ def _examine(context, body, face, params, direction, bottom, existing):
     fractions = underside.rib_positions(span, params["max_span_mm"])
     title = "{} — {} mm bridge".format(body.name, _format(span))
 
-    plan, reason = _plan(
+    plan, note = _plan(
         body, face, params, direction, bottom, near, span, fractions
     )
     if plan is None:
         return Finding(
-            identifier, ID, title, detail=reason, body=body.name,
+            identifier, ID, title, detail=note, body=body.name,
             fixable=False, entities=[], reveal=[face],
         )
     if _already_ribbed(existing, plan):
@@ -173,12 +177,16 @@ def _examine(context, body, face, params, direction, bottom, existing):
         identifier,
         ID,
         title,
-        detail="Spans {} mm unsupported, past the {} mm limit. {} into {} spans of {} mm.".format(
-            _format(span), _format(params["max_span_mm"]),
-            "One rib divides it" if len(plan) == 1
-            else "{} ribs divide it".format(len(plan)),
-            len(plan) + 1, _format(span / (len(plan) + 1)),
-        ),
+        detail=" ".join(filter(None, [
+            "Spans {} mm unsupported, past the {} mm limit. {} into {} spans "
+            "of {} mm.".format(
+                _format(span), _format(params["max_span_mm"]),
+                "One rib divides it" if len(plan) == 1
+                else "{} ribs divide it".format(len(plan)),
+                len(plan) + 1, _format(span / (len(plan) + 1)),
+            ),
+            note,
+        ])),
         body=body.name,
         fixable=True,
         fix_summary="Add {} removable support{} ({} mm ridge, {} mm gap)".format(
@@ -357,7 +365,11 @@ def _shape(params, direction, span_normal, across, along, bottom, height,
 
 
 def _plan(body, face, params, direction, bottom, near, span, fractions):
-    """Work out where the ribs go, or say why they cannot. Returns (plan, why)."""
+    """Work out where the ribs go.
+
+    Returns ``(plan, note)``. With no plan the note says why; with one it may
+    still carry something the user should know before ticking the box.
+    """
     across = _across_direction(direction, near.normal)
     if across is None:
         return None, "Could not work out which way the bridge runs."
@@ -381,34 +393,35 @@ def _plan(body, face, params, direction, bottom, near, span, fractions):
         if geo.to_mm(height) >= params["buttress_above_mm"] else 0.0
     )
 
+    # Nothing the rule builds may reach past the part's own footprint. A
+    # support wider than the thing it supports fouls the brim and the skirt,
+    # and looks like a mistake even when it prints.
+    across_bounds = fg.bounding_box_extent(body, across)
+    span_bounds = fg.bounding_box_extent(body, near.normal)
+    half = geo.to_cm(params["thickness_mm"]) / 2.0
+
     plan = []
+    tabbed = False
     for fraction in fractions:
         along = start + geo.to_cm(span) * fraction
         anchor = _point(direction, near.normal, across, middle_up, along, 0.0)
 
-        # Each end either reaches out into open air for a grip tab, or pulls
-        # back from a wall it would otherwise weld itself to. Separate
-        # clearances, because they answer separate questions.
-        reach_low, reach_high = _ends(
-            body, anchor, across, low, high, tab, clearance
+        # Each end either stands off a wall it would weld itself to, or
+        # reaches out for a grip within whatever room the part leaves.
+        reach_low, reach_high, has_tab = _ends(
+            body, anchor, across, low, high, tab, clearance, across_bounds
         )
-        if tab > 0.0 and reach_low >= low and reach_high <= high:
-            return None, (
-                "Nowhere to put a grip tab: the sides of this bridge are "
-                "enclosed, so a support could not be pulled out."
-            )
+        tabbed = tabbed or has_tab
 
         rib, reason = _shape(
             params, direction, near.normal, across, along, bottom, height,
             reach_low, reach_high,
-            _reach(body, anchor, across, -1.0, flange, reach_low),
-            _reach(body, anchor, across, 1.0, flange, reach_high),
-            _reach(body, anchor, near.normal, -1.0, flange,
-                   -geo.to_cm(params["thickness_mm"]) / 2.0),
-            _reach(body, anchor, near.normal, 1.0, flange,
-                   geo.to_cm(params["thickness_mm"]) / 2.0),
-            _reach(body, anchor, near.normal, 1.0, buttress,
-                   geo.to_cm(params["thickness_mm"]) / 2.0) if buttress else 0.0,
+            _trimmed(body, anchor, across, -1.0, flange, reach_low, across_bounds[0]),
+            _trimmed(body, anchor, across, 1.0, flange, reach_high, across_bounds[1]),
+            _trimmed(body, anchor, near.normal, -1.0, flange, -half, span_bounds[0]),
+            _trimmed(body, anchor, near.normal, 1.0, flange, half, span_bounds[1]),
+            _trimmed(body, anchor, near.normal, 1.0, buttress, half, span_bounds[1])
+            if buttress else 0.0,
         )
         if rib is None:
             return None, reason
@@ -421,28 +434,61 @@ def _plan(body, face, params, direction, bottom, near, span, fractions):
 
     if not plan:
         return None, "Nothing to divide."
-    return plan, ""
+    return plan, ("" if tabbed else _FLUSH)
 
 
-def _ends(body, anchor, across, low, high, tab, clearance):
-    """Where the rib's two ends land: out into air, or back from a wall.
+_FLUSH = (
+    "The bridge runs to the edge of the part, so the supports finish flush "
+    "with it rather than growing a grip tab past it. Pull them out from "
+    "underneath."
+)
 
-    A tab needs open space to reach into; an end that has no open space next
-    to it is against something, and has to stand off it instead or the two
-    will weld together in the print.
+
+def _trimmed(body, anchor, axis, sign, wanted, from_station, bound):
+    """An extension, kept inside the part's extent and out of its material."""
+    return _reach(
+        body, anchor, axis, sign,
+        _room_for(from_station, sign, bound, wanted),
+        from_station,
+    )
+
+
+def _ends(body, anchor, across, low, high, tab, clearance, bounds):
+    """Where the rib's two ends land, and whether either got a grip tab.
+
+    Three cases at each end. Against material, it stands off by the side
+    clearance, or the two will weld together in the print. In open air it
+    reaches out for a grip -- but never past the part's own extent, because a
+    support wider than the thing it supports fouls the brim, the skirt and
+    anything else the slicer arranges around the part. Where the bridge
+    already runs to the edge of the part there is no room for a tab at all,
+    and the rib finishes flush.
     """
-    reach_low, reach_high = low, high
-    for sign in (-1.0, 1.0):
-        edge = high if sign > 0 else low
-        if tab > 0.0 and _reach(body, anchor, across, sign, tab, edge) >= tab:
-            reach = edge + sign * tab
-        else:
-            reach = edge - sign * clearance
-        if sign > 0:
-            reach_high = reach
-        else:
-            reach_low = reach
-    return reach_low, reach_high
+    part_low, part_high = bounds
+    ends = {}
+    tabbed = False
+    for sign, edge, bound in ((-1.0, low, part_low), (1.0, high, part_high)):
+        # A probe just past the end says whether there is anything there. The
+        # side clearance is the natural distance to ask about, since that is
+        # what would be needed to stand off it.
+        if _reach(body, anchor, across, sign, max(clearance, _NUDGE), edge) <= 0.0:
+            ends[sign] = edge - sign * clearance
+            continue
+        grip = _room_for(edge, sign, bound, tab)
+        if grip > 0.0 and _reach(body, anchor, across, sign, grip, edge) < grip:
+            grip = 0.0
+        ends[sign] = edge + sign * grip
+        tabbed = tabbed or grip > 0.0
+    return ends[-1.0], ends[1.0], tabbed
+
+
+def _room_for(edge, sign, bound, wanted):
+    """How far a rib may reach past an edge without passing the part's own.
+
+    The rib is scaffolding; it has no business occupying ground the part does
+    not. Where the two coincide the answer is zero and the rib ends flush.
+    """
+    return min(wanted, max(0.0, (bound - edge) * sign))
 
 
 def _reach(body, anchor, axis, sign, wanted, from_station):
@@ -554,11 +600,11 @@ def _build(context, finding, face, params):
     near, _far = pair
     span = underside.span_mm(near, pair[1])
     fractions = underside.rib_positions(span, params["max_span_mm"])
-    plan, reason = _plan(
+    plan, note = _plan(
         body, face, params, direction, bottom, near, span, fractions
     )
     if plan is None:
-        return Outcome.failed(finding.id, reason)
+        return Outcome.failed(finding.id, note)
 
     number = fg.next_support_number(component)
     temporary = []
