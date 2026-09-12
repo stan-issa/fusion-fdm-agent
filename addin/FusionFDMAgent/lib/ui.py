@@ -106,11 +106,15 @@ class AddInUI:
                 # a fresh one is safer than adopting it.
                 existing.deleteMe()
 
+            # Created hidden so the bridge is listening before the page can
+            # load and send its opening "ready" -- a message sent before the
+            # handler is attached is simply lost, and the palette then waits
+            # forever for a reply to a question nobody heard.
             self._palette = self._ui.palettes.add2(
                 config.PALETTE_ID,
                 config.PALETTE_NAME,
                 _file_url(config.PALETTE_HTML),
-                True,   # isVisible
+                False,  # isVisible
                 True,   # showCloseButton
                 True,   # isResizable
                 config.PALETTE_WIDTH,
@@ -120,6 +124,7 @@ class AddInUI:
                 adsk.core.PaletteDockingStates.PaletteDockStateRight
             )
             self._bridge = ChatBridge(self._palette, self._pump)
+            self._palette.isVisible = True
             self._log.info("palette created")
         else:
             self._palette.isVisible = True

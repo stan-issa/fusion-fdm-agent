@@ -31,12 +31,53 @@
 
   /* -- transport ------------------------------------------------------- */
 
+  /*
+   * Fusion injects the `adsk` bridge into the page on its own schedule, which
+   * can land after this script runs. Sending once and giving up loses the
+   * opening `ready` and leaves the palette stuck on "Starting..." forever, so
+   * outbound messages queue until the bridge shows up.
+   */
+  var bridgeReady = false;
+  var pending = [];
+  var BRIDGE_POLL_MS = 100;
+  var BRIDGE_ATTEMPTS = 100; // ~10s
+
+  function bridgeAvailable() {
+    return typeof adsk !== "undefined" && adsk && typeof adsk.fusionSendData === "function";
+  }
+
   function toPython(action, payload) {
-    if (typeof adsk === "undefined" || !adsk.fusionSendData) {
-      console.info("[fdm-agent] not in Fusion; dropped", action, payload);
+    var data = JSON.stringify(payload || {});
+    if (bridgeReady) {
+      adsk.fusionSendData(action, data);
       return;
     }
-    adsk.fusionSendData(action, JSON.stringify(payload || {}));
+    pending.push([action, data]);
+  }
+
+  function waitForBridge(attemptsLeft) {
+    if (bridgeAvailable()) {
+      bridgeReady = true;
+      while (pending.length) {
+        var message = pending.shift();
+        adsk.fusionSendData(message[0], message[1]);
+      }
+      return;
+    }
+    if (attemptsLeft <= 0) {
+      // Either the page is open outside Fusion, or the bridge genuinely failed.
+      // Say so rather than sitting on "Starting..." indefinitely.
+      applyState({
+        status: "error",
+        detail: "No connection to Fusion. If you opened this page in a browser, "
+              + "that is expected; inside Fusion, stop and re-run the add-in.",
+        backends: []
+      });
+      return;
+    }
+    setTimeout(function () {
+      waitForBridge(attemptsLeft - 1);
+    }, BRIDGE_POLL_MS);
   }
 
   // Fusion calls this for every palette.sendInfoToHTML.
@@ -232,5 +273,6 @@
   });
 
   toPython("ready", {});
+  waitForBridge(BRIDGE_ATTEMPTS);
   el.input.focus();
 }());
