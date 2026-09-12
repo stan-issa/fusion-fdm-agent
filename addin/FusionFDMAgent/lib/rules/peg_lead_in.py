@@ -24,7 +24,7 @@ from . import signature as sig
 from .base import Finding, Outcome
 
 ID = "peg_lead_in"
-TITLE = "Chamfer mating pegs"
+TITLE = "Add lead-ins to pegs"
 DESCRIPTION = (
     "Chamfers the free end of pegs and pins so they start into a hole, "
     "leaving the diameter below the chamfer alone."
