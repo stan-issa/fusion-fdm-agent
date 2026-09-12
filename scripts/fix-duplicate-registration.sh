@@ -11,8 +11,14 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-if pgrep -f "Autodesk Fusion.app" >/dev/null 2>&1; then
-  bad "Fusion is running. Quit it first -- it rewrites this file on exit."
+# Match the main executable only. The bundle nests a dozen helper apps
+# (ADPClientService, Autodesk Identity Manager, CER...) that keep running long
+# after Fusion quits, so a substring match on "Autodesk Fusion.app" reports
+# Fusion as running when it is not.
+fusion_pids="$(pgrep -f "Autodesk Fusion\.app/Contents/MacOS/Autodesk Fusion" 2>/dev/null || true)"
+if [ -n "$fusion_pids" ]; then
+  bad "Fusion is running (pid $(echo $fusion_pids | tr '\n' ' ')). Quit it first --"
+  echo "        it rewrites this file on exit and would undo the cleanup."
   exit 1
 fi
 
