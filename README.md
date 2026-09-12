@@ -24,7 +24,8 @@ guess:
 | **Rib long bridges** | Flat bridges held at both ends whose span exceeds what the printer bridges cleanly (15 mm by default) | Ribs standing on the build plate, dividing the span. Separate named bodies, shaped so they come off |
 
 Tick the rules you want at the top of the panel, press **Check model**, then
-tick the findings to fix and press **Apply**. That click is the approval — you
+tick the findings to fix and press **Apply** — or **Select all** to take
+everything that can be fixed. That click is the approval — you
 have already seen exactly what you selected. Each rule's **Options** holds its
 thresholds; both the ticks and the thresholds are remembered.
 

@@ -27,7 +27,7 @@
     },
     check: document.getElementById("rules-check"),
     list: document.getElementById("rules-list"),
-    toggleAll: document.getElementById("rules-toggle-all"),
+    toggleAll: document.getElementById("findings-toggle-all"),
     selected: document.getElementById("rules-selected"),
     buildDir: document.getElementById("build-dir"),
     notes: document.getElementById("rules-notes"),
@@ -384,14 +384,26 @@
     return box;
   }
 
+  function fixable() {
+    return findings.filter(function (finding) {
+      return finding.fixable;
+    });
+  }
+
   function updateApply() {
-    var chosen = Object.keys(ticked).filter(function (key) {
-      return ticked[key];
+    var available = fixable();
+    var chosen = available.filter(function (finding) {
+      return ticked[finding.id];
     });
     el.apply.disabled = chosen.length === 0 || Boolean(pending);
-    el.count.textContent = chosen.length
-      ? chosen.length + " selected"
+    el.count.textContent = available.length
+      ? chosen.length + " of " + available.length + " selected"
       : "";
+    el.toggleAll.disabled = available.length === 0 || Boolean(pending);
+    el.toggleAll.textContent =
+      chosen.length === available.length && available.length
+        ? "Select none"
+        : "Select all";
   }
 
   /* -- the rule list ---------------------------------------------------- */
@@ -507,11 +519,8 @@
     var chosen = picked().length;
     el.check.disabled = chosen === 0 || Boolean(pending);
     el.selected.textContent = catalogue.length
-      ? chosen + " of " + catalogue.length + " selected"
+      ? chosen + " of " + catalogue.length + " rules"
       : "";
-    el.toggleAll.textContent =
-      chosen === catalogue.length && catalogue.length ? "Select none" : "Select all";
-    el.toggleAll.disabled = catalogue.length === 0;
   }
 
   /* -- input ------------------------------------------------------------ */
@@ -528,14 +537,20 @@
   });
 
   el.toggleAll.addEventListener("click", function () {
-    var wanted = picked().length < catalogue.length;
-    catalogue.forEach(function (rule) {
-      if (rule.enabled !== wanted) {
-        rule.enabled = wanted;
-        bridge.send("rulesSetParams", { rule: rule.id, enabled: wanted });
+    var available = fixable();
+    var wanted = available.some(function (finding) {
+      return !ticked[finding.id];
+    });
+    available.forEach(function (finding) {
+      ticked[finding.id] = wanted;
+      // Set the boxes directly rather than redrawing the list: a re-render
+      // would fold away any skip reasons the user had opened to read.
+      var box = document.getElementById("f-" + finding.id);
+      if (box) {
+        box.checked = wanted;
       }
     });
-    renderRules();
+    updateApply();
   });
 
   el.apply.addEventListener("click", function () {
