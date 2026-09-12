@@ -105,11 +105,22 @@ def opposed(found, tolerance_deg=OPPOSED_TOLERANCE_DEG):
 
     This is the test for "bridge rather than ledge", and it is what keeps the
     two rules off each other's faces.
+
+    Opposite normals alone are not enough. An underside that wraps round the
+    top of a block -- a cap overhanging three sides of a post -- meets walls
+    on either side of the block, and those two normals are exactly opposed
+    while facing *away* from one another: what lies between them is the block,
+    and the underside hangs outwards past both. Facing each other means each
+    wall is ahead of the other along its own outward normal, which is to say
+    the span between them is a real gap rather than a negative one.
     """
     for index, first in enumerate(found):
         for second in found[index + 1:]:
-            if geo.angle_between_deg(first.normal, second.normal) >= 180.0 - tolerance_deg:
-                return first, second
+            if geo.angle_between_deg(first.normal, second.normal) < 180.0 - tolerance_deg:
+                continue
+            if span_mm(first, second) <= 0.0:
+                continue  # back to back around solid, not across an opening
+            return first, second
     return None
 
 

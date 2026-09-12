@@ -149,8 +149,6 @@ def _examine(context, body, face, params, direction, bottom, existing):
     near, far = pair
 
     span = underside.span_mm(near, far)
-    if span <= 0.0:
-        return None
     if span <= params["max_span_mm"]:
         return None  # short enough to bridge cleanly
 

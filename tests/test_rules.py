@@ -553,6 +553,14 @@ def test_bridge_vs_ledge():
     check("walls at right angles are not a span",
           underside.opposed(underside.supports(corner, up)) is None)
 
+    # A cap overhanging three sides of a post meets walls on either side of
+    # it, exactly opposed but facing outwards: the post is what lies between
+    # them and the underside hangs past both. That is a ledge all the way
+    # round, and reading it as a bridge is what hid it from the gusset rule.
+    cap = held([(-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)])
+    check("walls back to back around a post are not a span",
+          underside.opposed(underside.supports(cap, up)) is None)
+
     if pair is not None:
         check("the span is measured between the two wall planes",
               close(underside.span_mm(pair[0], pair[1]), 10.0),
