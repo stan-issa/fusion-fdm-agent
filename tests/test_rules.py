@@ -357,57 +357,65 @@ def test_reveal():
 # -- which way a chamfer would move material -------------------------------
 
 
-def _corner(first_normal, second_normal, first_interior, start, end):
+def _corner(first_normal, second_normal, solid, start, end):
     """Two faces meeting at a straight edge, with declared normals.
 
-    `first_interior` is a point inside the first face, which is what says
-    which way its surface runs off the edge.
+    `solid` decides whether a point is inside the material, which is what the
+    convexity probe asks. Everything else about a corner can be declared;
+    that cannot, because it *is* the question.
     """
     planes = adsk.core.SurfaceTypes.PlaneSurfaceType
-    first = _FakeFace("a", planes, first_normal, first_interior)
+    body = _FusionObject(
+        pointContainment=lambda point, test=solid: (
+            adsk.fusion.PointContainment.PointInsidePointContainment
+            if test(point.x, point.y, point.z)
+            else adsk.fusion.PointContainment.PointOutsidePointContainment
+        )
+    )
+    first = _FakeFace("a", planes, first_normal, (0.0, 0.0, 0.0))
     second = _FakeFace("b", planes, second_normal, (0.0, 0.0, 0.0))
-    edge = _FusionObject(
+    first.body = second.body = body
+    return _FusionObject(
         entityToken="edge",
         geometry=_FusionObject(curveType=adsk.core.Curve3DTypes.Line3DCurveType),
         faces=_Collection([first, second]),
-        body=_FakeBody(),
+        body=body,
         startVertex=_FusionObject(geometry=adsk.core.Point3D.create(*start)),
         endVertex=_FusionObject(geometry=adsk.core.Point3D.create(*end)),
         pointOnEdge=adsk.core.Point3D.create(
             *[(a + b) / 2.0 for a, b in zip(start, end)]
         ),
     )
-    return edge
+
+
+ALONG_Y = ((0.0, -1.0, 0.0), (0.0, 1.0, 0.0))
 
 
 def test_convexity():
     print("which way a chamfer would move material")
 
-    # The top of a box meeting its side. Walking across the top away from the
-    # edge leaves the side's half-space, so the solid closes up behind you:
-    # a convex 90 degree corner, and a chamfer on it cuts material away.
+    # The top of a box meeting its side: material below and behind. A convex
+    # 90 degree corner, and a chamfer on it cuts material away.
     box = _corner(
-        first_normal=(0.0, 0.0, 1.0), second_normal=(1.0, 0.0, 0.0),
-        first_interior=(-1.0, 0.0, 0.0),
-        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), (1.0, 0.0, 0.0),
+        lambda x, y, z: x < 0 and z < 0, *ALONG_Y,
     )
     check("a box corner is 90 degrees",
           close(fg.interior_angle_deg(box), 90.0, 1e-6),
           fg.interior_angle_deg(box))
 
-    # The underside of a ledge meeting the wall it projects from. Walking out
-    # along the underside stays inside the wall's half-space -- the solid
-    # opens out around you. 270 degrees, and a chamfer here *fills* the
-    # corner, which is the whole basis of the gusset rule.
+    # The underside of a ledge meeting the wall it projects from: the wall
+    # runs on below, and the ledge sits above. 270 degrees, and a chamfer
+    # here *fills* the corner, which is the basis of the gusset rule.
     #
-    # The earlier test stepped along the sum of the two outward normals and
-    # asked whether that left the solid. It does leave it at a convex corner
-    # and also at a concave one, where it points into the pocket, so every
-    # edge came back convex.
+    # Neither of these can be told from the other by stepping along the two
+    # normals combined: that direction leaves the solid at a convex corner
+    # and at a concave one alike, where it points into the pocket. Stepping
+    # along their *difference* lies beside the material wedge instead, which
+    # is inside the solid only when the wedge is wider than a half turn.
     ledge = _corner(
-        first_normal=(0.0, 0.0, -1.0), second_normal=(1.0, 0.0, 0.0),
-        first_interior=(1.0, 0.0, 0.0),
-        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+        (0.0, 0.0, -1.0), (1.0, 0.0, 0.0),
+        lambda x, y, z: x < 0 or z > 0, *ALONG_Y,
     )
     check("a ledge underside corner is 270 degrees",
           close(fg.interior_angle_deg(ledge), 270.0, 1e-6),
@@ -416,25 +424,22 @@ def test_convexity():
     # An edge already chamfered at 45 degrees reads as relieved, which is what
     # bed_chamfer uses the number for.
     relieved = _corner(
-        first_normal=(0.0, 0.0, -1.0),
-        second_normal=(0.7071067811865476, 0.0, -0.7071067811865476),
-        first_interior=(-1.0, 0.0, 0.0),
-        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+        (0.0, 0.0, -1.0), (0.7071067811865476, 0.0, -0.7071067811865476),
+        lambda x, y, z: z > 0, *ALONG_Y,
     )
     angle = fg.interior_angle_deg(relieved)
     check("an already-chamfered edge reads as relieved",
-          angle is not None and angle > 100.0, angle)
+          angle is not None and close(angle, 135.0, 1e-6), angle)
 
-    # Sliding along the edge says nothing about which side of the other face
-    # you are on, so it must not sway the answer.
-    skewed = _corner(
-        first_normal=(0.0, 0.0, 1.0), second_normal=(1.0, 0.0, 0.0),
-        first_interior=(-1.0, 8.0, 0.0),
-        start=(0.0, -1.0, 0.0), end=(0.0, 1.0, 0.0),
+    # Fusion lists an edge's two faces in an order of its own choosing, and
+    # the answer must not depend on it.
+    swapped = _corner(
+        (1.0, 0.0, 0.0), (0.0, 0.0, -1.0),
+        lambda x, y, z: x < 0 or z > 0, *ALONG_Y,
     )
-    check("the component along the edge is ignored",
-          close(fg.interior_angle_deg(skewed), 90.0, 1e-6),
-          fg.interior_angle_deg(skewed))
+    check("the order the faces come in does not matter",
+          close(fg.interior_angle_deg(swapped), 270.0, 1e-6),
+          fg.interior_angle_deg(swapped))
 
 
 # -- sizing a ledge gusset -------------------------------------------------
@@ -723,9 +728,22 @@ def _peg(tip_on_bed=False, chamfered=False):
         "tip", cones if chamfered else planes,
         (0.0, 0.0, 1.0 if not tip_on_bed else -1.0), (0.0, 0.0, tip_z),
     )
-    _circular_edge(0.25, base_z, peg, base)
-    _circular_edge(0.25, tip_z, peg, tip)
+    root = _circular_edge(0.25, base_z, peg, base)
+    end = _circular_edge(0.25, tip_z, peg, tip)
+    # The tip disc is bounded by its ring. The face the peg stands on merely
+    # has that ring as a hole punched through it -- which is the whole
+    # difference between a peg's tip and its root.
+    _loops(tip, (True, [end]))
+    _loops(base, (True, []), (False, [root]))
     return peg
+
+
+def _loops(face, *loops):
+    """Give a fake face its loops: (isOuter, [edge]) for each."""
+    face.loops = _Collection([
+        _FusionObject(isOuter=outer, edges=_Collection(list(edges)))
+        for outer, edges in loops
+    ])
 
 
 def _circular_edge(radius, z, first, second):
@@ -754,14 +772,16 @@ def test_peg_ends():
     # A chamfer on the root would undercut the peg where it meets its base
     # instead of leading anything into anything. The two edges are the same
     # shape and differ only in which way the solid folds at them.
-    ends, note = peg_lead_in._free_ends(_peg(), up, -5.0)
+    ends, note = peg_lead_in._free_ends(_peg(), up, -5.0, peg_lead_in._PassedOver())
     check("only the free end is chamfered", len(ends) == 1, (len(ends), note))
     if ends:
         check("and it is the one away from the base",
               close(fg.circle_centre(ends[0])[2], 1.0, 1e-9))
 
     # An end opening into a cone already has its lead-in.
-    ends, note = peg_lead_in._free_ends(_peg(chamfered=True), up, -5.0)
+    ends, note = peg_lead_in._free_ends(
+        _peg(chamfered=True), up, -5.0, peg_lead_in._PassedOver()
+    )
     check("an already chamfered peg is left alone",
           ends == [] and "Already" in note, note)
 
@@ -769,9 +789,34 @@ def test_peg_ends():
     # bed-contact rule already chamfers it -- at the size elephant's foot
     # wants, not the size assembly wants. Two chamfers on one edge is one
     # too many.
-    ends, note = peg_lead_in._free_ends(_peg(tip_on_bed=True), up, 0.0)
+    ends, note = peg_lead_in._free_ends(
+        _peg(tip_on_bed=True), up, 0.0, peg_lead_in._PassedOver()
+    )
     check("a peg standing on its tip is left to the bed rule",
           ends == [] and "build plate" in note, note)
+
+    # A rule that reports nothing is indistinguishable from one that is
+    # broken, so an empty result has to say what was examined.
+    seen = peg_lead_in._PassedOver()
+    context = RuleContext()
+    seen.report(context, merge_params(peg_lead_in.PARAMS), found_any=False)
+    check("a model with no pegs says so",
+          context.notes == ["No pegs or pins found to check."], context.notes)
+
+    seen = peg_lead_in._PassedOver()
+    seen.bosses, seen.stubby = 3, 2
+    context = RuleContext()
+    seen.report(context, merge_params(peg_lead_in.PARAMS), found_any=False)
+    check("pegs passed over are counted with their reason",
+          "3 pegs" in context.notes[0] and "shorter than" in context.notes[0],
+          context.notes)
+
+    seen = peg_lead_in._PassedOver()
+    seen.bosses = 1
+    context = RuleContext()
+    seen.report(context, merge_params(peg_lead_in.PARAMS), found_any=True)
+    check("nothing said when there are findings to speak for themselves",
+          context.notes == [])
 
 
 # -- a support has no business being wider than the part -------------------

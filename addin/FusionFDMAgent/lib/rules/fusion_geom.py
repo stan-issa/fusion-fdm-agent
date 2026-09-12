@@ -93,6 +93,29 @@ def face_area(face):
         return 0.0
 
 
+def normal_at(face, point):
+    """The outward normal at a particular point on a face.
+
+    For a plane the normal is the same everywhere and the point is irrelevant.
+    For a **cylinder it is not**: it sweeps right round the axis, so asking
+    for it at a sample point Fusion chose for its own reasons can return a
+    direction pointing the opposite way to the one wanted. Computing it from
+    the axis removes the question.
+    """
+    if is_cylindrical(face):
+        try:
+            origin, axis, _radius = cylinder_axis(face)
+        except Exception:
+            return outward_normal(face, to_point(point))
+        offset = geo.subtract(point, origin)
+        radial = geo.subtract(offset, geo.scale(axis, geo.dot(offset, axis)))
+        if geo.length(radial) > 0.0:
+            radial = geo.normalise(radial)
+            # A bore's wall faces its axis; a boss's faces away from it.
+            return geo.negate(radial) if is_bore(face) else radial
+    return outward_normal(face, nearest_point_on_face(face, point))
+
+
 def outward_normal(face, point=None):
     """The normal pointing *out of* the solid at a point on the face.
 
@@ -144,6 +167,40 @@ def outer_loop_edges(face):
         for edge_index in range(loop_edges.count):
             edges.append(loop_edges.item(edge_index))
     return edges
+
+
+def loop_is_outer(face, edge):
+    """Whether an edge bounds a face or punches a hole in it.
+
+    The difference between the tip of a peg and its root: the tip disc is
+    bounded by its ring, while the face the peg stands on merely has that
+    ring as a hole in it. One number, and no reasoning about which way the
+    material folds.
+    """
+    token = entity_token(edge)
+    loops = face.loops
+    for index in range(loops.count):
+        loop = loops.item(index)
+        edges = loop.edges
+        for edge_index in range(edges.count):
+            if _same_edge(edges.item(edge_index), edge, token):
+                return loop.isOuter
+    return None
+
+
+def _same_edge(candidate, edge, token):
+    if token is not None:
+        return entity_token(candidate) == token
+    # Without tokens, two circles in the same place are the same circle.
+    if not (is_circular(candidate) and is_circular(edge)):
+        return False
+    centre, other = circle_centre(candidate), circle_centre(edge)
+    if centre is None or other is None:
+        return False
+    return (
+        geo.distance(centre, other) < 1e-6
+        and abs((circle_radius(candidate) or 0.0) - (circle_radius(edge) or 0.0)) < 1e-6
+    )
 
 
 def all_loop_edges(face):
@@ -334,24 +391,23 @@ def interior_angle_deg(edge):
 
     90 for a sharp box corner, 135 where a 45 degree chamfer has already been
     cut, near 180 where a fillet runs tangentially into the face, 270 for the
-    internal corner under a ledge. One number therefore answers "is this edge
-    already relieved?" for chamfers and fillets alike, and separately says
-    which way a chamfer on it would move material.
+    internal corner under a ledge.
 
-    Convexity cannot be decided by stepping along the two outward normals
-    combined: that direction leaves the solid at a convex corner *and* at a
-    concave one, where it points into the pocket. What does distinguish them
-    is walking off the edge across one face and asking which side of the
-    other face you end up on.
+    Convexity comes from a single containment probe, along ``n1 - n2``. That
+    direction is perpendicular to the bisector of the two normals, so it lies
+    beside the material wedge rather than within it -- and beside a wedge
+    narrower than a half turn is outside the solid, while beside a wider one
+    is inside. Stepping along the normals *combined* cannot tell them apart:
+    it leaves the solid at a convex corner and at a concave one alike, where
+    it points into the pocket.
     """
     faces = edge.faces
     if faces.count < 2:
         return None
-    first_face, second_face = faces.item(0), faces.item(1)
     midpoint = edge_midpoint(edge)
     try:
-        first = outward_normal(first_face, nearest_point_on_face(first_face, midpoint))
-        second = outward_normal(second_face, nearest_point_on_face(second_face, midpoint))
+        first = normal_at(faces.item(0), midpoint)
+        second = normal_at(faces.item(1), midpoint)
     except Exception:
         return None
 
@@ -359,42 +415,15 @@ def interior_angle_deg(edge):
     if between == 0.0:
         return 180.0
 
-    inward = _across_face(first_face, edge, midpoint)
-    if inward is None:
-        return None
-    # Crossing the first face takes you *out* of the second face's half-space
-    # when the material closes up behind you -- a convex corner. Staying
-    # inside it means the solid opens out around you, which is a concave one.
-    if geo.dot(inward, second) < 0.0:
-        return 180.0 - between
-    return 180.0 + between
-
-
-def _across_face(face, edge, from_point):
-    """A direction leading off the edge into the face, along the face."""
-    try:
-        interior = point_tuple(face.pointOnFace)
-    except Exception:
-        return None
-    offset = geo.subtract(interior, from_point)
-    tangent = edge_tangent(edge)
-    if tangent is not None:
-        # Only the part crossing the edge says anything; sliding along it says
-        # nothing about which side of the other face you are on.
-        offset = geo.subtract(offset, geo.scale(tangent, geo.dot(offset, tangent)))
-    if geo.length(offset) == 0.0:
-        return None
-    return geo.normalise(offset)
-
-
-def edge_tangent(edge):
-    """Direction along a straight edge, or None if its ends coincide."""
-    try:
-        start = point_tuple(edge.startVertex.geometry)
-        end = point_tuple(edge.endVertex.geometry)
-        return geo.normalise(geo.subtract(end, start))
-    except Exception:
-        return None
+    sideways = geo.subtract(first, second)
+    if geo.length(sideways) == 0.0:
+        return 180.0
+    probe = geo.add(
+        midpoint, geo.scale(geo.normalise(sideways), _PROBE_DISTANCE)
+    )
+    if is_inside(edge.body, probe):
+        return 180.0 + between
+    return 180.0 - between
 
 
 def nearest_point_on_face(face, point):

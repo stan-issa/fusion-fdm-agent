@@ -295,14 +295,25 @@ corner in, and the corner beneath a ledge is concave. An equal-distance
 chamfer there adds exactly the 45 degree triangle wanted, and leaves the top
 of the ledge alone.
 
-That makes convexity load-bearing, and the first version of
-`interior_angle_deg` got it wrong in a way that happened not to matter yet. It
-stepped along the sum of the two outward normals and asked whether that left
-the solid — which it does at a convex corner *and* at a concave one, where it
-points into the pocket, so every edge came back convex. The only caller was
-`bed_chamfer`, whose footprint edges are all convex, so the answer was right
-by luck. It now walks off the edge across one face and asks which side of the
-other face it lands on, which actually distinguishes them.
+That makes convexity load-bearing, and it took two goes to get right. The
+first version stepped along the *sum* of the two outward normals and asked
+whether that left the solid — which it does at a convex corner and at a
+concave one alike, where it points into the pocket, so every edge came back
+convex. The second walked off the edge across one face toward that face's
+`pointOnFace`, which is a point Fusion picks for its own reasons: on a large
+face it can be anywhere, so the direction it implies is arbitrary.
+
+The test that works probes along the **difference** of the two normals. That
+direction is perpendicular to their bisector, so it lies beside the material
+wedge rather than within it — and beside a wedge narrower than a half turn is
+outside the solid, while beside a wider one is inside. One containment call,
+no reliance on where a sample point happens to sit, and the same answer
+whichever order Fusion lists the two faces in.
+
+Normals have to be evaluated *at the edge*, too. On a plane the normal is the
+same everywhere and it does not matter; on a cylinder it sweeps right round
+the axis, so asking at the wrong point can return the opposite direction.
+`normal_at` computes it from the axis instead.
 
 Because a chamfer the wrong way round produces a perfectly healthy feature and
 a worse part, a rule states which direction it expects and `chamfer_op`

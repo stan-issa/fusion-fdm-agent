@@ -56,6 +56,7 @@ def detect(context, params):
     direction = context.build_direction.vector
     restrict = _selected_tokens(context)
     findings = []
+    seen = _PassedOver()
 
     for body in context.bodies:
         if not fg.is_native_body(body):
@@ -63,19 +64,26 @@ def detect(context, params):
         bottom, _top = fg.bounding_box_extent(body, direction)
         for face in fg.body_faces(body):
             finding = _examine(
-                context, body, face, params, direction, bottom, restrict, size_mm
+                context, body, face, params, direction, bottom, restrict,
+                size_mm, seen,
             )
             if finding is not None:
                 findings.append(finding)
+
+    seen.report(context, params, bool(findings))
     return findings
 
 
-def _examine(context, body, face, params, direction, bottom, restrict, size_mm):
+def _examine(context, body, face, params, direction, bottom, restrict,
+             size_mm, seen):
     if not fg.is_cylindrical(face) or fg.is_bore(face):
         return None  # a hole; hole_lead_in has that half
+    seen.bosses += 1
     if restrict is not None and fg.entity_token(face) not in restrict:
+        seen.unselected += 1
         return None
     if context.is_thread_face(face):
+        seen.threaded += 1
         return None  # the end of a thread is the thread's business
     if fg.is_ignored(face, ID):
         return None
@@ -94,6 +102,7 @@ def _examine(context, body, face, params, direction, bottom, restrict, size_mm):
     )
 
     if length_mm < max(params["min_length_mm"], size_mm * LENGTH_FACTOR):
+        seen.stubby += 1
         return None  # too stubby to lead anything in
 
     if size_mm > radius_mm * MAX_RADIUS_FRACTION:
@@ -106,7 +115,7 @@ def _examine(context, body, face, params, direction, bottom, restrict, size_mm):
             body=body.name, fixable=False, entities=[], reveal=[face],
         )
 
-    tips, note = _free_ends(face, direction, bottom)
+    tips, note = _free_ends(face, direction, bottom, seen)
     if not tips:
         if note:
             return Finding(
@@ -132,14 +141,15 @@ def _examine(context, body, face, params, direction, bottom, restrict, size_mm):
     )
 
 
-def _free_ends(face, direction, bottom):
+def _free_ends(face, direction, bottom, seen):
     """The circular edges at a peg's free end, skipping its root.
 
-    A peg's two ends look alike -- a circle where the cylinder meets a flat
-    face -- and differ in which way the solid folds at them. The tip is a
-    convex corner; the root is concave, where the peg rises out of whatever
-    carries it. Chamfering the root would undercut the peg rather than lead
-    anything into anything.
+    A peg's two ends look alike: a circle where the cylinder meets a flat
+    face. What separates them is what that flat face is. The tip is a disc
+    *bounded* by its ring; the root is a ring punched as a hole through
+    whatever the peg stands on. So the question is which loop the ring
+    belongs to, which Fusion answers outright -- rather than which way the
+    material folds there, which has to be inferred and can be inferred wrong.
     """
     ends = []
     for edge in fg.face_edges(face):
@@ -149,24 +159,63 @@ def _free_ends(face, direction, bottom):
         if neighbour is None:
             continue
         if fg.surface_type(neighbour) == _cone_type():
+            seen.chamfered += 1
             return [], "Already chamfered."
         if not fg.is_planar(neighbour):
             continue
-
-        angle = fg.interior_angle_deg(edge)
-        if angle is None or angle >= 180.0:
-            continue  # concave: this is where the peg joins its base
+        if fg.loop_is_outer(neighbour, edge) is False:
+            continue  # a hole in the face the peg rises out of: the root
 
         # A peg standing on its tip has that face chamfered by bed_chamfer,
         # at the size elephant's foot wants rather than the size assembly
         # wants. Two chamfers on one edge is one too many.
         if orientation.is_bed_face(neighbour, direction, bottom):
+            seen.on_bed += 1
             return [], (
                 "Its end sits on the build plate, where the bed-contact rule "
                 "has it."
             )
         ends.append(edge)
     return ends, ""
+
+
+class _PassedOver:
+    """Pegs the rule looked at and decided against.
+
+    Counted rather than dropped. "No pegs on this model" and "one peg, and
+    its end is already chamfered" are different answers to the same button,
+    and a rule that reports nothing either way is indistinguishable from a
+    rule that is broken.
+    """
+
+    def __init__(self):
+        self.bosses = 0
+        self.unselected = 0
+        self.stubby = 0
+        self.chamfered = 0
+        self.on_bed = 0
+        self.threaded = 0
+
+    def report(self, context, params, found_any):
+        if found_any:
+            return
+        if not self.bosses:
+            context.note("No pegs or pins found to check.")
+            return
+        reasons = [
+            (self.unselected, "outside what is selected in Fusion"),
+            (self.stubby, "shorter than {} mm".format(_format(params["min_length_mm"]))),
+            (self.threaded, "threaded"),
+        ]
+        said = ", ".join(
+            "{} {}".format(count, why) for count, why in reasons if count
+        )
+        context.note(
+            "Looked at {} peg{}{}.".format(
+                self.bosses, "" if self.bosses == 1 else "s",
+                ": " + said if said else ", and none needs a lead-in",
+            )
+        )
 
 
 def _cone_type():
@@ -176,28 +225,41 @@ def _cone_type():
 
 
 def _selected_tokens(context):
-    """Tokens of cylindrical faces the user has selected, or None for all.
+    """Tokens of selected pegs, or None to consider every peg.
 
     Which pegs actually mate with something is not a question geometry can
-    answer, so a selection is how the user says.
+    answer, so a selection is how the user says. Only *pegs* count: selecting
+    a hole is how they answer the other rule's question, and it must not
+    silence this one by narrowing it to a set no peg is in.
     """
+    return selected_cylinders(context, bores=False)
+
+
+def selected_cylinders(context, bores):
     tokens = set()
     for entity in (context.selection or []):
-        candidate = adsk.fusion.BRepFace.cast(entity)
-        if candidate is not None and fg.is_cylindrical(candidate):
-            token = fg.entity_token(candidate)
+        for face in _cylindrical_faces(entity):
+            if fg.is_bore(face) != bores:
+                continue
+            token = fg.entity_token(face)
             if token:
                 tokens.add(token)
-            continue
-        edge = adsk.fusion.BRepEdge.cast(entity)
-        if edge is not None:
-            for index in range(edge.faces.count):
-                neighbour = edge.faces.item(index)
-                if fg.is_cylindrical(neighbour):
-                    token = fg.entity_token(neighbour)
-                    if token:
-                        tokens.add(token)
     return tokens or None
+
+
+def _cylindrical_faces(entity):
+    face = adsk.fusion.BRepFace.cast(entity)
+    if face is not None:
+        if fg.is_cylindrical(face):
+            yield face
+        return
+    edge = adsk.fusion.BRepEdge.cast(entity)
+    if edge is None:
+        return
+    for index in range(edge.faces.count):
+        neighbour = edge.faces.item(index)
+        if fg.is_cylindrical(neighbour):
+            yield neighbour
 
 
 def _format(value):

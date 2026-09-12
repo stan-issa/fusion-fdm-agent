@@ -177,29 +177,15 @@ def _cone_type():
 
 
 def _selected_tokens(context):
-    """Tokens of cylindrical faces the user has selected, or None for all.
+    """Tokens of selected bores, or None to consider every bore.
 
-    A selection narrows the search to the holes the user pointed at, which is
-    how "these two are assembly holes" gets expressed without a dialog.
+    Only bores count. Selecting a peg is how the user answers the companion
+    rule's question, and it must not silence this one by narrowing it to a
+    set no hole is in.
     """
-    entities = (context.selection or [])
-    tokens = set()
-    for entity in entities:
-        face = adsk.fusion.BRepFace.cast(entity)
-        if face is not None and fg.is_cylindrical(face):
-            token = fg.entity_token(face)
-            if token:
-                tokens.add(token)
-            continue
-        edge = adsk.fusion.BRepEdge.cast(entity)
-        if edge is not None:
-            for index in range(edge.faces.count):
-                neighbour = edge.faces.item(index)
-                if fg.is_cylindrical(neighbour):
-                    token = fg.entity_token(neighbour)
-                    if token:
-                        tokens.add(token)
-    return tokens or None
+    from .peg_lead_in import selected_cylinders
+
+    return selected_cylinders(context, bores=True)
 
 
 def _format(value):
