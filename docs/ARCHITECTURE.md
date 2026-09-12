@@ -315,6 +315,45 @@ several distances. A chamfer feature holds more than one edge set, so they
 still land in a single feature — which is what stops the first one
 invalidating the edges the rest are holding.
 
+### Scaffolding, not geometry
+
+The rib rule is the odd one out: it does not change the part at all. It stands
+thin walls beside it, on the build plate, to divide a bridge too long to span
+cleanly — and they are meant to be snapped off afterwards, which shapes
+everything about how they are made.
+
+They arrive as **separate bodies**, through one base feature, so removing the
+scaffolding later is a single deletion. Each is a box from
+`TemporaryBRepManager`, placed by its centre and two axes, because a box
+described that way needs no sketch plane and so has none of the orientation
+guesswork that sketching on a face involves — the third axis falls out of the
+other two and a box is symmetric about it, so there is no sign to get wrong.
+
+Each body is marked with an attribute, and `_bodies_in_scope` steps over
+anything so marked. Otherwise the next check would find a support's flat
+bottom and offer to chamfer the footprint of something the user is about to
+throw away.
+
+Removability is two details. A calibrated **top gap** means the part rests on
+the support without fusing to it, and a **grip tab** running out past the side
+of the part gives something to pull. Both are probed before they are promised:
+a tab is only extended where the space beside the part is actually open, and a
+rib is only planned where the column down to the plate is clear. A support
+that cannot be gripped, or that runs into the part on its way down, is not a
+support.
+
+### One face, two rules
+
+A bridge underside and a ledge underside are the same thing to look at: a flat
+face pointing down. They are not the same problem. A ledge is held along one
+edge and droops off the far end; a bridge is held at two opposite edges and
+sags in the middle. A gusset is the answer to one and ribs to the other, so
+both rules share `underside.py` and its definition of what holds a face up —
+an edge counts only when its wall carries on *below* the face. Two opposing
+supports make a bridge, and `ledge_gusset` steps aside. Without that agreement
+both rules would fire on every bridge and the part would get two answers to
+one problem.
+
 ### What the rules refuse to do
 
 Conservative by design, because a wrong fix is worse than a missing one. A bore

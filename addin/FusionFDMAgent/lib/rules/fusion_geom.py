@@ -726,3 +726,109 @@ def set_ignored(entity, rule_id, ignore=True):
     except Exception:
         return False
     return True
+
+
+# -- support bodies --------------------------------------------------------
+#
+# The rib rule builds solids rather than modifying the part, which is a
+# different kind of operation from everything else here. Boxes come from the
+# temporary BRep manager and arrive through a base feature, because a box
+# placed by its centre and two axes needs no sketch plane and so has none of
+# the orientation guesswork that sketching on a face involves.
+
+SUPPORT_ATTRIBUTE = "support"
+SUPPORT_PREFIX = "FDM support"
+
+
+def create_box(centre, length_direction, width_direction, length, width, height):
+    """A temporary box, positioned and oriented outright. Centimetres."""
+    box = adsk.core.OrientedBoundingBox3D.create(
+        to_point(centre),
+        to_vector(length_direction),
+        to_vector(width_direction),
+        length, width, height,
+    )
+    return adsk.fusion.TemporaryBRepManager.get().createBox(box)
+
+
+def add_bodies(component, bodies):
+    """Bring temporary bodies into the document as real, named ones.
+
+    Returns ``(feature, [body], problem)``. They arrive in one base feature so
+    that removing the scaffolding later is a single deletion rather than an
+    archaeology exercise.
+    """
+    try:
+        base = component.features.baseFeatures.add()
+    except Exception as exc:
+        return None, [], str(exc) or type(exc).__name__
+
+    added = []
+    try:
+        base.startEdit()
+        try:
+            for temporary, name in bodies:
+                body = component.bRepBodies.add(temporary, base)
+                body.name = name
+                mark_support(body)
+                added.append(body)
+        finally:
+            base.finishEdit()
+    except Exception as exc:
+        try:
+            base.deleteMe()
+        except Exception:
+            pass
+        return None, [], str(exc) or type(exc).__name__
+
+    return base, added, feature_problem(base)
+
+
+def mark_support(body):
+    """Record that a body is scaffolding, not part of the design.
+
+    Written as an attribute so it travels with the document, and checked
+    wherever the rules walk the model: chamfering the bottom of a support the
+    user is about to snap off would be a strange thing to offer.
+    """
+    try:
+        body.attributes.add(ATTRIBUTE_GROUP, SUPPORT_ATTRIBUTE, "1")
+        return True
+    except Exception:
+        return False
+
+
+def is_support_body(body):
+    try:
+        if body.attributes.itemByName(ATTRIBUTE_GROUP, SUPPORT_ATTRIBUTE) is not None:
+            return True
+    except Exception:
+        pass
+    # The name is a fallback for a body whose attribute did not survive, and
+    # for one a user made themselves and named to match.
+    try:
+        return body.name.startswith(SUPPORT_PREFIX)
+    except Exception:
+        return False
+
+
+def next_support_number(component):
+    """The next free number in the support naming sequence."""
+    highest = 0
+    try:
+        bodies = component.bRepBodies
+    except Exception:
+        return 1
+    for index in range(bodies.count):
+        try:
+            name = bodies.item(index).name
+        except Exception:
+            continue
+        if not name.startswith(SUPPORT_PREFIX):
+            continue
+        tail = name[len(SUPPORT_PREFIX):].strip()
+        try:
+            highest = max(highest, int(tail.split()[0]))
+        except (ValueError, IndexError):
+            continue
+    return highest + 1

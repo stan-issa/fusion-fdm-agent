@@ -495,7 +495,7 @@ def _units(design):
 def _bodies_in_scope(design, notes):
     """Visible solid bodies of the active component, within the caps."""
     component = design.activeComponent or design.rootComponent
-    bodies, meshes, occurrences, oversized = [], 0, 0, 0
+    bodies, meshes, occurrences, oversized, supports = [], 0, 0, 0, 0
 
     try:
         meshes = component.meshBodies.count
@@ -510,6 +510,11 @@ def _bodies_in_scope(design, notes):
                 continue
         except Exception:
             continue
+        if fg.is_support_body(body):
+            # Scaffolding the user is going to snap off. Chamfering its
+            # footprint or teardropping a hole in it would be absurd.
+            supports += 1
+            continue
         if not fg.is_native_body(body):
             occurrences += 1
             continue
@@ -523,7 +528,12 @@ def _bodies_in_scope(design, notes):
         if len(bodies) >= MAX_BODIES:
             break
 
-    if collection.count > len(bodies) + occurrences + oversized:
+    if supports:
+        notes.append(
+            "{} support bod{} skipped; they are scaffolding, not part of the "
+            "design.".format(supports, "y" if supports == 1 else "ies")
+        )
+    if collection.count > len(bodies) + occurrences + oversized + supports:
         notes.append(
             "Checked {} of {} bodies.".format(len(bodies), collection.count)
         )

@@ -19,6 +19,7 @@ look perfectly healthy, the applier is told to expect the body to grow.
 """
 
 from . import chamfer_op, fusion_geom as fg, geometry as geo, signature as sig
+from . import underside
 from .base import Finding, Outcome
 
 ID = "ledge_gusset"
@@ -41,13 +42,6 @@ PARAMS = {
     },
 }
 
-# How square to the build direction a face must be to count as a wall.
-_WALL_TOLERANCE_DEG = 5.0
-
-# A face this close to the bottom of the body is resting on the bed, not
-# hanging over air. Centimetres.
-_BED_TOLERANCE = 0.001
-
 # Below this there is nothing worth adding, and Fusion will refuse anyway.
 _MIN_GUSSET_MM = 0.1
 
@@ -66,29 +60,21 @@ def detect(context, params):
             continue
         bottom, _top = fg.bounding_box_extent(body, direction)
         for face in fg.body_faces(body):
-            if not _is_underside(face, direction, params, bottom):
+            if not underside.is_underside(
+                face, direction, params["max_tilt_deg"], bottom
+            ):
+                continue
+            # Held at two opposite edges, this is a bridge rather than a
+            # ledge: it sags in the middle rather than drooping off one end,
+            # and bridge_ribs is the rule that knows what to do about it.
+            # Without this both rules would act on the same face.
+            if underside.opposed(underside.supports(face, direction)) is not None:
                 continue
             for edge in fg.face_edges(face):
                 finding = _examine(context, body, face, edge, params, direction)
                 if finding is not None:
                     findings.append(finding)
     return findings
-
-
-def _is_underside(face, direction, params, bottom):
-    """A flat face hanging over air, rather than the one resting on the bed."""
-    if not fg.is_planar(face):
-        return False
-    try:
-        normal = fg.outward_normal(face)
-    except Exception:
-        return False
-    if not geo.is_same_direction(
-        normal, geo.negate(direction), params["max_tilt_deg"]
-    ):
-        return False
-    # The bottom of the part is not an overhang; it is what the part stands on.
-    return fg.plane_offset(face, direction) > bottom + _BED_TOLERANCE
 
 
 def _examine(context, body, face, edge, params, direction):
@@ -106,14 +92,16 @@ def _examine(context, body, face, edge, params, direction):
         wall_normal = fg.outward_normal(wall)
     except Exception:
         return None
-    if not geo.is_perpendicular(wall_normal, direction, _WALL_TOLERANCE_DEG):
+    if not geo.is_perpendicular(
+        wall_normal, direction, underside.WALL_TOLERANCE_DEG
+    ):
         return None
 
     # The wall has to carry on *below* the ledge for a gusset to sit against
     # it. This is also what tells a ledge's inner edge from its outer one:
     # the face at the outer edge is the end of the ledge and rises from it,
     # so there is nothing underneath to build against.
-    below_mm = _wall_depth_mm(wall, edge, direction)
+    below_mm = underside.depth_below(wall, edge, direction)
     if below_mm <= _MIN_GUSSET_MM:
         return None
 
@@ -185,20 +173,6 @@ def _projection_mm(face, wall, wall_normal):
     if furthest is None:
         return 0.0
     return geo.to_mm(furthest - wall_station)
-
-
-def _wall_depth_mm(wall, edge, direction):
-    """How far the wall carries on below the ledge."""
-    here = geo.dot(fg.edge_midpoint(edge), direction)
-    lowest = None
-    for wall_edge in fg.face_edges(wall):
-        for point in fg.edge_points(wall_edge):
-            station = geo.dot(point, direction)
-            if lowest is None or station < lowest:
-                lowest = station
-    if lowest is None:
-        return 0.0
-    return geo.to_mm(here - lowest)
 
 
 def _space_is_clear(body, edge, wall_normal, direction, gusset_mm):

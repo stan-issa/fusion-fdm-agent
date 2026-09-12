@@ -26,7 +26,13 @@ What each rule should say about the result:
                  underside 8 mm above the bed, which is a 90 degree overhang.
                  Its inner edge should be found and its outer edge should not:
                  the face at the outer edge rises from it, so there is nothing
-                 underneath to build a gusset against.
+                 underneath to build a gusset against. The bridge's underside
+                 must *not* be claimed: it is held at both ends, which is a
+                 different problem with a different answer.
+
+  bridge_ribs    The third body is a 60 mm bridge on two legs, open underneath
+                 and open at both sides. Against the default 20 mm limit it
+                 wants two supports, near 20 mm and 40 mm.
 """
 
 import traceback
@@ -67,6 +73,9 @@ def run(context):
         _vertical_holes(root, plate)
         _horizontal_bore(root, plate, x=45.0)
 
+        bridge = _bridge(root)
+        del bridge
+
         block = _block(root)
         _horizontal_bore(root, block, x=BLOCK_ORIGIN_X + BLOCK[0] / 2.0)
         _cross_hole(root, block)
@@ -75,9 +84,10 @@ def run(context):
 
         ui.messageBox(
             "Test part built.\n\n"
-            "Two bodies on the bed: a plate with a 0.8 mm fin, a projecting "
+            "Three bodies on the bed: a plate with a 0.8 mm fin, a projecting "
             "shelf, two plain 5 mm holes, {}, and a clean 8 mm horizontal "
-            "bore; and a block whose 8 mm bore is cross-drilled.\n\n"
+            "bore; a block whose 8 mm bore is cross-drilled; and a 60 mm "
+            "bridge on two legs.\n\n"
             "Open the FDM Agent panel and press Check model.".format(
                 "a threaded 5 mm hole" if threaded
                 else "a 5 mm hole the thread could not be added to"
@@ -93,6 +103,61 @@ def run(context):
 
 def _plate(root):
     return _box(root, 0.0, 0.0, PLATE[0], PLATE[1], PLATE[2], "Plate")
+
+
+BRIDGE = (60.0, 20.0, 24.0)   # span, depth, height
+BRIDGE_LEG = 8.0              # width of each leg
+BRIDGE_DECK = 6.0             # thickness of the span itself
+BRIDGE_ORIGIN_X = -80.0
+
+
+def _bridge(root):
+    """Two legs carrying a 60 mm span, open underneath and at both sides.
+
+    What bridge_ribs exists for, and what ledge_gusset must leave alone. The
+    sides are deliberately open so a support has somewhere to put a grip tab
+    and a way out.
+    """
+    span, depth, height = BRIDGE
+    left = _box(
+        root, BRIDGE_ORIGIN_X, 0.0,
+        BRIDGE_ORIGIN_X + BRIDGE_LEG, depth, height - BRIDGE_DECK, "Bridge",
+    )
+    _join_box(
+        root, left,
+        BRIDGE_ORIGIN_X + span - BRIDGE_LEG, 0.0,
+        BRIDGE_ORIGIN_X + span, depth,
+        0.0, height - BRIDGE_DECK,
+    )
+    # The deck, resting on both legs with nothing under the middle.
+    _join_box(
+        root, left,
+        BRIDGE_ORIGIN_X, 0.0, BRIDGE_ORIGIN_X + span, depth,
+        height - BRIDGE_DECK, BRIDGE_DECK,
+    )
+    return left
+
+
+def _join_box(root, body, x0, y0, x1, y1, start, height):
+    """Add a box to an existing body, starting at a height above the bed."""
+    sketch = root.sketches.add(root.xYConstructionPlane)
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(
+        adsk.core.Point3D.create(mm(x0), mm(y0), 0),
+        adsk.core.Point3D.create(mm(x1), mm(y1), 0),
+    )
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(
+        sketch.profiles.item(0), adsk.fusion.FeatureOperations.JoinFeatureOperation
+    )
+    extrude_input.participantBodies = [body]
+    if start:
+        extrude_input.startExtent = adsk.fusion.OffsetStartDefinition.create(
+            adsk.core.ValueInput.createByReal(mm(start))
+        )
+    extrude_input.setDistanceExtent(
+        False, adsk.core.ValueInput.createByReal(mm(height))
+    )
+    extrudes.add(extrude_input)
 
 
 def _block(root):

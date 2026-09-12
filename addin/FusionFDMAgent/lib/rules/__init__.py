@@ -11,11 +11,18 @@ bore destroys the entrance ring a lead-in would have chamfered; a gusset can
 reach the bottom of the part and move the footprint; chamfering the footprint
 rewrites every edge of the bottom face. Going the other way round would leave
 the later rule pointing at geometry that no longer exists.
+
+Ribbing a bridge comes last for the opposite reason. It does not change the
+part at all -- it stands scaffolding beside it -- so it wants the part to be
+finished first. Ribs cut to fit a bridge that a later rule then reshaped would
+be the wrong height.
 """
 
-from . import bed_chamfer, hole_lead_in, ledge_gusset, teardrop_bore
+from . import (
+    bed_chamfer, bridge_ribs, hole_lead_in, ledge_gusset, teardrop_bore,
+)
 
-RULES = (teardrop_bore, hole_lead_in, ledge_gusset, bed_chamfer)
+RULES = (teardrop_bore, hole_lead_in, ledge_gusset, bed_chamfer, bridge_ribs)
 
 BY_ID = {rule.ID: rule for rule in RULES}
 

@@ -20,6 +20,7 @@ guess:
 | **Add lead-ins to holes** | Plain cylindrical bores with a bare mouth | A 0.5 mm entrance chamfer; the bore diameter below it is untouched |
 | **Teardrop horizontal bores** | Bores running across the build direction (within 30° of horizontal), at any diameter, whose flat roof cannot print | A 45° teardrop roof, tangent to the bore, so the original circular clearance is preserved |
 | **Slope ledge undersides** | Straight ledges projecting from a wall, whose flat underside is a 90° overhang | A 45° triangular gusset filling the corner beneath it. The top of the ledge is untouched |
+| **Rib long bridges** | Flat bridges held at both ends whose span exceeds what the printer bridges cleanly (20 mm by default) | Thin walls standing on the build plate, dividing the span. Separate named bodies, with a top gap and a grip tab so they snap off |
 
 Tick the rules you want at the top of the panel, press **Check model**, then
 tick the findings to fix and press **Apply**. That click is the approval — you
@@ -38,6 +39,10 @@ means you are done.
 Some exclusions cannot be read off the geometry: a bearing seat and a clearance
 hole are the same cylinder. **Ignore** marks one on the model itself, so it
 travels with the document.
+
+Supports arrive as separate bodies named `FDM support 1`, `2`… and marked as
+scaffolding, so the other rules step over them rather than offering to chamfer
+something you are about to snap off.
 
 The rules are Python modules in `addin/FusionFDMAgent/lib/rules/`; adding one
 means writing `detect` and `apply` and nothing else.

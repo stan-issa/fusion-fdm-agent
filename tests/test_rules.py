@@ -33,7 +33,7 @@ from FusionFDMAgent.lib.rules import geometry as geo            # noqa: E402
 from FusionFDMAgent.lib.rules import signature as sig           # noqa: E402
 from FusionFDMAgent.lib.rules import RULES, BY_ID               # noqa: E402
 from FusionFDMAgent.lib.rules import (                          # noqa: E402
-    chamfer_op, fusion_geom as fg, ledge_gusset, teardrop_bore,
+    chamfer_op, fusion_geom as fg, ledge_gusset, teardrop_bore, underside,
 )
 from FusionFDMAgent.lib.rules.session import _same_document     # noqa: E402
 from FusionFDMAgent.lib.rules.base import (                     # noqa: E402
@@ -298,7 +298,13 @@ def test_catalogue():
     order = [rule.ID for rule in RULES]
     check("teardrop runs before lead-in",
           order.index("teardrop_bore") < order.index("hole_lead_in"))
-    check("bed chamfer runs last", order[-1] == "bed_chamfer")
+    check("bed chamfer is the last rule to change the part",
+          order.index("bed_chamfer") == len(order) - 2)
+    # Ribbing stands scaffolding beside the part instead of changing it, so it
+    # wants the part finished first: ribs cut to fit a bridge that a later
+    # rule reshaped would be the wrong height.
+    check("ribbing runs after everything that changes the part",
+          order[-1] == "bridge_ribs")
 
 
 class _FusionObject:
@@ -442,12 +448,12 @@ def test_ledge_gusset():
     # outer edge of the underside or part of it stays flat.
     planes = adsk.core.SurfaceTypes.PlaneSurfaceType
     wall = _FakeFace("wall", planes, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-    underside = _FakeFace("under", planes, (0.0, 0.0, -1.0), (0.3, 0.0, 1.0))
-    _straight_edge(underside, (0.0, 0.0, 1.0), (0.0, 2.0, 1.0))
-    _straight_edge(underside, (0.6, 0.0, 1.0), (0.6, 2.0, 1.0))
+    shelf = _FakeFace("under", planes, (0.0, 0.0, -1.0), (0.3, 0.0, 1.0))
+    _straight_edge(shelf, (0.0, 0.0, 1.0), (0.0, 2.0, 1.0))
+    _straight_edge(shelf, (0.6, 0.0, 1.0), (0.6, 2.0, 1.0))
     check("projection is measured out from the wall plane",
-          close(ledge_gusset._projection_mm(underside, wall, (1.0, 0.0, 0.0)), 6.0),
-          ledge_gusset._projection_mm(underside, wall, (1.0, 0.0, 0.0)))
+          close(ledge_gusset._projection_mm(shelf, wall, (1.0, 0.0, 0.0)), 6.0),
+          ledge_gusset._projection_mm(shelf, wall, (1.0, 0.0, 0.0)))
 
     # How far the wall runs below the ledge is what tells a ledge's inner edge
     # from its outer one. The face at the outer edge rises from it and has
@@ -455,15 +461,15 @@ def test_ledge_gusset():
     inner = _straight_edge(wall, (0.0, 0.0, 1.0), (0.0, 2.0, 1.0))
     _straight_edge(wall, (0.0, 0.0, 0.0), (0.0, 2.0, 0.0))
     check("wall depth below the ledge is measured",
-          close(ledge_gusset._wall_depth_mm(wall, inner, up), 10.0),
-          ledge_gusset._wall_depth_mm(wall, inner, up))
+          close(underside.depth_below(wall, inner, up), 10.0),
+          underside.depth_below(wall, inner, up))
 
     outer = _FakeFace("outer", planes, (1.0, 0.0, 0.0), (0.6, 0.0, 1.0))
     lip = _straight_edge(outer, (0.6, 0.0, 1.0), (0.6, 2.0, 1.0))
     _straight_edge(outer, (0.6, 0.0, 1.5), (0.6, 2.0, 1.5))
     check("a face that only rises from the edge offers no depth",
-          ledge_gusset._wall_depth_mm(outer, lip, up) <= 0.0,
-          ledge_gusset._wall_depth_mm(outer, lip, up))
+          underside.depth_below(outer, lip, up) <= 0.0,
+          underside.depth_below(outer, lip, up))
 
     # The clearance probe is what "avoid adjoining parts" comes down to, and
     # it doubles as the already-gusseted test.
@@ -495,6 +501,87 @@ def _straight_edge(face, start, end):
     )
     face.edges.append(edge)
     return edge
+
+
+# -- ledges and bridges are not the same thing -----------------------------
+
+
+def test_bridge_vs_ledge():
+    print("telling a bridge from a ledge")
+
+    up = (0.0, 0.0, 1.0)
+    planes = adsk.core.SurfaceTypes.PlaneSurfaceType
+
+    def held(normals):
+        """An underside meeting a wall along each of the given normals.
+
+        Each wall is given an edge below the underside, so it counts as
+        carrying it.
+        """
+        face = _FakeFace("under", planes, (0.0, 0.0, -1.0), (0.0, 0.0, 1.0))
+        for index, normal in enumerate(normals):
+            # Each wall sits a centimetre further along, so the two of them
+            # enclose a real span rather than coinciding.
+            wall = _FakeFace(
+                "wall-{}".format(index), planes, normal, (index * 1.0, 0.0, 0.0)
+            )
+            edge = _straight_edge(face, (index * 1.0, 0.0, 1.0), (index * 1.0, 2.0, 1.0))
+            edge.faces.append(wall)
+            wall.edges.append(edge)
+            _straight_edge(wall, (index * 1.0, 0.0, 0.0), (index * 1.0, 2.0, 0.0))
+        return face
+
+    # A ledge hangs off one wall. A bridge is carried at both ends and sags in
+    # the middle instead. They want different fixes -- a gusset under one end,
+    # ribs under the span -- so if both rules claimed the same face the part
+    # would get two answers to one problem.
+    ledge = held([(1.0, 0.0, 0.0)])
+    check("one wall is a ledge", underside.opposed(underside.supports(ledge, up)) is None)
+
+    bridge = held([(1.0, 0.0, 0.0), (-1.0, 0.0, 0.0)])
+    pair = underside.opposed(underside.supports(bridge, up))
+    check("two facing walls are a bridge", pair is not None)
+
+    # Walls at right angles carry a corner, not a span.
+    corner = held([(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)])
+    check("walls at right angles are not a span",
+          underside.opposed(underside.supports(corner, up)) is None)
+
+    if pair is not None:
+        check("the span is measured between the two wall planes",
+              close(underside.span_mm(pair[0], pair[1]), 10.0),
+              underside.span_mm(pair[0], pair[1]))
+
+
+# -- dividing a long bridge ------------------------------------------------
+
+
+def test_rib_positions():
+    print("dividing a long bridge")
+
+    # The worked example from the specification: a 60 mm bridge against a
+    # tested 20 mm maximum wants supports near 20 and 40 mm.
+    check("60 mm at a 20 mm limit gives ribs at 20 and 40",
+          [round(60 * f, 6) for f in underside.rib_positions(60.0, 20.0)] == [20.0, 40.0],
+          [60 * f for f in underside.rib_positions(60.0, 20.0)])
+
+    check("a span within the limit needs none",
+          underside.rib_positions(20.0, 20.0) == [])
+    check("a span just over the limit is halved",
+          [round(21.0 * f, 6) for f in underside.rib_positions(21.0, 20.0)] == [10.5])
+    check("100 mm at a 20 mm limit gives four",
+          len(underside.rib_positions(100.0, 20.0)) == 4)
+
+    # Whatever the count, no remaining piece may exceed the limit -- that is
+    # the whole point of the number.
+    for span in (20.5, 33.0, 59.9, 60.0, 60.1, 137.0):
+        pieces = len(underside.rib_positions(span, 20.0)) + 1
+        check("{} mm divides into spans within the limit".format(span),
+              span / pieces <= 20.0 + 1e-9, span / pieces)
+
+    check("nonsense spans give nothing",
+          underside.rib_positions(0.0, 20.0) == []
+          and underside.rib_positions(60.0, 0.0) == [])
 
 
 # -- where the teardrop cut runs -------------------------------------------
@@ -856,7 +943,7 @@ def test_parity():
 for test in (test_teardrop, test_vectors, test_units, test_distances,
              test_signatures, test_params, test_findings, test_catalogue,
              test_reveal, test_convexity, test_ledge_gusset,
-             test_teardrop_cut_span, test_silence_is_explained, test_grouping,
+             test_bridge_vs_ledge, test_rib_positions, test_teardrop_cut_span, test_silence_is_explained, test_grouping,
              test_document_identity, test_parity):
     test()
 
